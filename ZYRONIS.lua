@@ -1,5 +1,195 @@
-local Library = loadstring(game:HttpGet("https://pastefy.app/KkevWErG/raw"))()
+local ZYRONIS_LIB_URL = "https://pastefy.app/KkevWErG/raw"
+local _libOk, Library = pcall(function()
+ return loadstring(game:HttpGet(ZYRONIS_LIB_URL))()
+end)
+if not _libOk or type(Library) ~= "table" then
+ local msg = "ZYRONIS: UI kutuphanesi yuklenemedi (loadstring/HttpGet). Adres: " .. ZYRONIS_LIB_URL
+ pcall(function()
+  local g = Instance.new("ScreenGui")
+  g.Name = "ZYRONIS_LibError"
+  g.ResetOnSpawn = false
+  g.IgnoreGuiInset = true
+  g.Parent = game:GetService("CoreGui")
+  local t = Instance.new("TextLabel")
+  t.Size = UDim2.new(1, -40, 0, 60)
+  t.Position = UDim2.new(0, 20, 0, 60)
+  t.BackgroundTransparency = 1
+  t.Font = Enum.Font.GothamBold
+  t.TextSize = 16
+  t.TextColor3 = Color3.fromRGB(255, 80, 80)
+  t.TextWrapped = true
+  t.Text = msg
+  t.Parent = g
+ end)
+ error(msg, 0)
+end
 workspace.FallenPartsDestroyHeight = -math.huge
+
+-- ============================================================
+-- POLYFILL: kütüphanede olmayan Window:Notify ve Tab:AddLabel
+-- (bu metotlar çağrılmazsa script 1063. satırda patlar)
+-- ============================================================
+local NotifyGui = nil
+local NotifyStack = {}
+local NOTIFY_MAX = 5
+
+local function GetNotifyGui()
+ if NotifyGui and NotifyGui.Parent then return NotifyGui end
+ local gui = Instance.new("ScreenGui")
+ gui.Name = "ZYRONIS_Notify"
+ gui.ResetOnSpawn = false
+ gui.IgnoreGuiInset = true
+ gui.DisplayOrder = 999999
+ gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ local ok = pcall(function() gui.Parent = game:GetService("CoreGui") end)
+ if not ok or not gui.Parent then
+  gui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+ end
+ NotifyGui = gui
+ return gui
+end
+
+local function SlotOffset(i)
+ return (i - (NOTIFY_MAX - 1) / 2) * 70
+end
+
+local function PushToast(Configs)
+ if type(Configs) == "string" then Configs = { Content = Configs } end
+ if type(Configs) ~= "table" then Configs = {} end
+ local title = tostring(Configs.Title or "ZYRONIS")
+ local content = tostring(Configs.Content or "")
+ local duration = tonumber(Configs.Duration) or 3
+
+ local gui
+ pcall(function() gui = GetNotifyGui() end)
+ if not gui then return end
+
+ while #NotifyStack >= NOTIFY_MAX do
+  local old = table.remove(NotifyStack, 1)
+  pcall(function() if old and old.Parent then old:Destroy() end end)
+ end
+
+ local toast = Instance.new("Frame")
+ toast.Name = "Toast"
+ toast.AnchorPoint = Vector2.new(1, 0.5)
+ toast.Size = UDim2.new(0, 300, 0, 62)
+ toast.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
+ toast.BorderSizePixel = 0
+ toast.ZIndex = 10
+ toast.Parent = gui
+ toast.Position = UDim2.new(1, 60, 0.5, SlotOffset(#NotifyStack))
+ table.insert(NotifyStack, toast)
+
+ local corner = Instance.new("UICorner")
+ corner.CornerRadius = UDim.new(0, 8)
+ corner.Parent = toast
+
+ local accent = Instance.new("Frame")
+ accent.Size = UDim2.new(0, 4, 1, 0)
+ accent.Position = UDim2.new(0, 0, 0, 0)
+ accent.BackgroundColor3 = Color3.fromRGB(255, 30, 30)
+ accent.BorderSizePixel = 0
+ accent.ZIndex = 11
+ accent.Parent = toast
+ local ac = Instance.new("UICorner")
+ ac.CornerRadius = UDim.new(0, 4)
+ ac.Parent = accent
+
+ local titleLabel = Instance.new("TextLabel")
+ titleLabel.BackgroundTransparency = 1
+ titleLabel.Position = UDim2.new(0, 14, 0, 8)
+ titleLabel.Size = UDim2.new(1, -24, 0, 18)
+ titleLabel.Font = Enum.Font.GothamBold
+ titleLabel.TextSize = 14
+ titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+ titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+ titleLabel.ZIndex = 11
+ titleLabel.Text = title
+ titleLabel.Parent = toast
+
+ local contentLabel = Instance.new("TextLabel")
+ contentLabel.BackgroundTransparency = 1
+ contentLabel.Position = UDim2.new(0, 14, 0, 28)
+ contentLabel.Size = UDim2.new(1, -24, 0, 26)
+ contentLabel.Font = Enum.Font.Gotham
+ contentLabel.TextSize = 12
+ contentLabel.TextColor3 = Color3.fromRGB(185, 185, 185)
+ contentLabel.TextXAlignment = Enum.TextXAlignment.Left
+ contentLabel.TextYAlignment = Enum.TextYAlignment.Top
+ contentLabel.TextWrapped = true
+ contentLabel.ZIndex = 11
+ contentLabel.Text = content
+ contentLabel.Parent = toast
+
+ local targetY = SlotOffset(#NotifyStack - 1)
+ pcall(function()
+  local T = game:GetService("TweenService")
+  T:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+   Position = UDim2.new(1, -12, 0.5, targetY)
+  }):Play()
+ end)
+
+ task.delay(duration, function()
+  if not toast.Parent then return end
+  local pcallOk = pcall(function()
+   local T = game:GetService("TweenService")
+   local out = T:Create(toast, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+    Position = UDim2.new(1, 60, 0.5, targetY)
+   })
+   out:Play()
+   out.Completed:Wait()
+  end)
+  if not pcallOk then pcall(function() toast.Position = UDim2.new(1, 60, 0.5, targetY) end) end
+  local idx = table.find(NotifyStack, toast)
+  if idx then table.remove(NotifyStack, idx) end
+  pcall(function() toast:Destroy() end)
+ end)
+end
+
+local _rawMakeWindow = Library.MakeWindow
+if type(_rawMakeWindow) ~= "function" then
+ error("ZYRONIS: kutuphane MakeWindow metodunu kaybetti (API degismis olabilir)", 0)
+end
+Library.MakeWindow = function(self, Configs)
+ local Win = _rawMakeWindow(self, Configs)
+ if type(Win) ~= "table" then
+  error("ZYRONIS: MakeWindow tablo dondurmedi", 0)
+ end
+
+ Win.Notify = function(_, Configs2) PushToast(Configs2) end
+
+ local _rawMakeTab = Win.MakeTab
+ if type(_rawMakeTab) == "function" then
+  Win.MakeTab = function(self2, paste, cfg)
+   local Tab = _rawMakeTab(self2, paste, cfg)
+   if type(Tab) ~= "table" then return Tab end
+
+   if type(Tab.AddSection) == "function" then
+    Tab.AddLabel = function(t, text)
+     return t.AddSection(t, text)
+    end
+   end
+
+   local _rawAddSlider = Tab.AddSlider
+   if type(_rawAddSlider) == "function" then
+    Tab.AddSlider = function(t, sliderCfg)
+     if type(sliderCfg) == "table" and sliderCfg.Increment ~= nil and sliderCfg.Increase == nil then
+      sliderCfg.Increase = sliderCfg.Increment
+     end
+     return _rawAddSlider(t, sliderCfg)
+    end
+   end
+
+   return Tab
+  end
+ end
+
+ return Win
+end
+-- ============================================================
+-- POLYFILL SONU
+-- ============================================================
 
 local Window = Library:MakeWindow({
  Title = " ZYRONIS HUB | BROOKHAVEN RP ",
@@ -26,6 +216,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
+-- CurrentCamera respawn/spectate sirasinda degisebilir; bayat referans kullanma
+task.spawn(function()
+ while true do
+  local c = workspace.CurrentCamera
+  if c and c ~= Camera then Camera = c end
+  task.wait(1)
+ end
+end)
 local UserInputService = game:GetService("UserInputService")
 local TeleportService = game:GetService("TeleportService")
 local TweenService = game:GetService("TweenService")
@@ -46,6 +244,41 @@ local noclipActive = false
 local infiniteJumpActive = false
 local methodActive = false
 local methodKill = "Bus"
+local vehicleKillGen = 0
+
+-- ===== FE YARDIMCISI =====
+-- Diğer oyunculara yapılan CFrame değişiklikleri normalde sunucuya gitmez.
+-- Önce ağ sahipliğini elimize almaya çalışırız, olmazsa en azından
+-- yerel olarak doğru davranırız ve kullanıcıyı dürüst bilgilendiririz.
+local _ownerCache = {}
+local function ownsPart(root)
+ if _ownerCache[root] ~= nil then return _ownerCache[root] end
+ local ok = pcall(function() root:SetNetworkOwner(LocalPlayer) end)
+ _ownerCache[root] = ok
+ task.delay(2, function() _ownerCache[root] = nil end)
+ return ok
+end
+
+local function tryReplicate(root, cframe, velocity)
+ if not root or not root.Parent then return false end
+ local owned = ownsPart(root)
+ if velocity then
+  pcall(function() root.AssemblyLinearVelocity = velocity end)
+ end
+ if cframe then
+  pcall(function() root.CFrame = cframe end)
+ end
+ return owned
+end
+
+local function feNotice(feature, owned)
+ if owned then return end
+ Window:Notify({
+  Title = " Uyarı",
+  Content = feature .. " yerel olarak uygulandı (sunucu sahipliği sende değil, hedef bunu görmeyebilir)",
+  Duration = 4
+ })
+end
 
 _G.ESPData = {
  espEnabled = false,
@@ -83,7 +316,7 @@ InfoTab:AddButton({
 })
 
 InfoTab:AddSection({ "Sunucudaki Oyuncular" })
-local playerCountLabel = InfoTab:AddParagraph({ "Oyuncu Sayısı:", #game.Players:GetPlayers() })
+local playerCountLabel = InfoTab:AddParagraph({ "Oyuncu Sayısı:", tostring(#game.Players:GetPlayers()) })
 
 -- Not: Paragraph dinamik guncelleme desteklemiyor, buton ile guncellenir
 
@@ -178,7 +411,7 @@ local function KillPlayerCouch()
  local hrp = target.Character.HumanoidRootPart
  local adjustedPos = hrp.Position + (hrp.Velocity / 1.5)
 
- angle += 50
+ angle = angle + 50
  root.CFrame = CFrame.new(adjustedPos + Vector3.new(0, 2, 0)) * CFrame.Angles(math.rad(angle), 0, 0)
  align.Position = root.Position + Vector3.new(2, 0, 0)
 
@@ -229,12 +462,51 @@ local function BringPlayer()
  local tRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
  if not root or not tRoot then return end
 
- tRoot.CFrame = root.CFrame + root.CFrame.LookVector * 3
+ local owned = tryReplicate(tRoot, root.CFrame + root.CFrame.LookVector * 3)
  Window:Notify({
  Title = " Bring",
- Content = selectedPlayerName .. " getirildi!",
+ Content = selectedPlayerName .. " getirildi!" .. (owned and "" or " (yerel)"),
  Duration = 2
  })
+ if not owned then
+ feNotice("Bring", false)
+ end
+end
+
+-- ===== LOOP BRING (tanımsızdı, 403/410. satırda scripti öldürüyordu) =====
+local loopBringActive = false
+local loopBringConn = nil
+
+local function StartLoopBring()
+ if not selectedPlayerName then
+ Window:Notify({ Title = " Hata", Content = "Oyuncu seçilmedi", Duration = 2 })
+ return
+ end
+ if loopBringConn then pcall(function() loopBringConn:Disconnect() end) loopBringConn = nil end
+ loopBringActive = true
+ local name = selectedPlayerName
+
+ loopBringConn = RunService.Heartbeat:Connect(function()
+ if not loopBringActive or selectedPlayerName ~= name then
+ if loopBringConn then pcall(function() loopBringConn:Disconnect() end) loopBringConn = nil end
+ loopBringActive = false
+ return
+ end
+ local target = Players:FindFirstChild(selectedPlayerName)
+ local tRoot = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+ local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+ if tRoot and myRoot then
+ tryReplicate(tRoot, myRoot.CFrame * CFrame.new(0, 0, -3))
+ end
+ end)
+
+ Window:Notify({ Title = " Loop Bring", Content = "Başlatıldı: " .. tostring(selectedPlayerName), Duration = 2 })
+end
+
+local function StopLoopBring()
+ loopBringActive = false
+ if loopBringConn then pcall(function() loopBringConn:Disconnect() end) loopBringConn = nil end
+ Window:Notify({ Title = " Loop Bring", Content = "Durduruldu", Duration = 2 })
 end
 
 -- ===== FLING OYUNCU FONKSIYONU =====
@@ -253,25 +525,43 @@ local function FlingPlayer()
  local tRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
  if not root or not tRoot then return end
 
- local bodyVelocity = Instance.new("BodyVelocity")
- bodyVelocity.Velocity = Vector3.new(0, 0, 0)
- bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
- bodyVelocity.Parent = tRoot
+ local owned = ownsPart(tRoot)
 
- local function FlingSequence()
- for i = 1, 3 do
- bodyVelocity.Velocity = root.CFrame.LookVector * 300
- task.wait(0.1)
- end
- bodyVelocity:Destroy()
- end
+ if owned then
+  local bodyVelocity = Instance.new("BodyVelocity")
+  bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+  bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+  bodyVelocity.Parent = tRoot
 
- FlingSequence()
- Window:Notify({
- Title = " Fling",
- Content = selectedPlayerName .. " fırlatıldı!",
- Duration = 2
- })
+  local function FlingSequence()
+   for i = 1, 3 do
+    bodyVelocity.Velocity = root.CFrame.LookVector * 300
+    task.wait(0.1)
+   end
+   pcall(function() bodyVelocity:Destroy() end)
+  end
+
+  FlingSequence()
+  Window:Notify({
+   Title = " Fling",
+   Content = selectedPlayerName .. " fırlatıldı!",
+   Duration = 2
+  })
+ else
+  for i = 1, 3 do
+   pcall(function()
+    tRoot.AssemblyLinearVelocity = root.CFrame.LookVector * 300
+    tRoot.CFrame = tRoot.CFrame + root.CFrame.LookVector * 8
+   end)
+   task.wait(0.1)
+  end
+  Window:Notify({
+   Title = " Fling",
+   Content = selectedPlayerName .. " fırlatıldı (yerel)!",
+   Duration = 2
+  })
+  feNotice("Fling", false)
+ end
 end
 
 -- ===== BUS/TRUCK İLE ÖL FONKSIYONU =====
@@ -309,27 +599,41 @@ local function KillWithVehicle()
 
  local vehicle = GetVehicle()
  if vehicle then
+ vehicleKillGen = (vehicleKillGen or 0) + 1
+ local myGen = vehicleKillGen
  local function TrackPlayer()
  local timeout = tick() + 20
- while tick() < timeout do
+ while tick() < timeout and vehicleKillGen == myGen do
  if selectedPlayerName then
  local targetPlayer = Players:FindFirstChild(selectedPlayerName)
  if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
  local targetRoot = targetPlayer.Character.HumanoidRootPart
- vehicle:SetPrimaryPartCFrame(targetRoot.CFrame * CFrame.new(0, 0, 10))
+ pcall(function() vehicle:SetPrimaryPartCFrame(targetRoot.CFrame * CFrame.new(0, 0, 10)) end)
  end
  end
  RunService.RenderStepped:Wait()
  end
+ if vehicleKillGen == myGen then
+  pcall(function()
+   if originalPosition then humanoidRootPart.CFrame = originalPosition end
+  end)
  end
- spawn(TrackPlayer)
  end
+ task.spawn(TrackPlayer)
 
  Window:Notify({
  Title = " Araç",
  Content = vehicleType .. " ile saldırı başladı!",
  Duration = 3
  })
+ else
+ pcall(function() humanoidRootPart.CFrame = originalPosition end)
+ Window:Notify({
+ Title = " Hata",
+ Content = "Araç oluşturulamadı, konumun geri alındı",
+ Duration = 3
+ })
+ end
 end
 
 -- ===== TELEPORT OYUNCU =====
@@ -367,11 +671,15 @@ local function StunPlayer()
  if not tRoot then return end
 
  local bodyGyro = Instance.new("BodyGyro")
- bodyGyro.MaxTorque = Vector3.new(0, 0, 0)
+ bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+ bodyGyro.P = 100000
+ bodyGyro.D = 500
+ pcall(function() bodyGyro.CFrame = tRoot.CFrame end)
+ ownsPart(tRoot)
  bodyGyro.Parent = tRoot
 
  task.wait(3)
- bodyGyro:Destroy()
+ pcall(function() bodyGyro:Destroy() end)
 
  Window:Notify({
  Title = " Stun",
@@ -984,17 +1292,154 @@ local ESPTab = Window:MakeTab({ Title = " ESP", Icon = "eye" })
 
 ESPTab:AddSection(" ESP Ayarları")
 
+-- GERCEK ESP RENDERER (onceki kod sadece deger yaziyordu, kimse cizmiyordu)
+local mainESPStore = {}
+local mainESPConn = nil
+local mainESPPlayerConn = nil
+
+local function mainESPColor()
+ local sel = _G.ESPData.selectedColor
+ if sel == "Kırmızı" then return Color3.fromRGB(255, 60, 60)
+ elseif sel == "Yeşil" then return Color3.fromRGB(60, 255, 90)
+ elseif sel == "Mavi" then return Color3.fromRGB(70, 140, 255)
+ elseif sel == "Sarı" then return Color3.fromRGB(255, 225, 60)
+ end
+ return nil
+end
+
+local function mainESPText(plr)
+ local t = _G.ESPData.espType
+ local name = tostring(plr.DisplayName)
+ local age = tostring(plr.AccountAge) .. "g"
+ if t == "Sadece Ad" then return name
+ elseif t == "Sadece Yaş" then return age
+ end
+ return name .. " | " .. age
+end
+
+local function mainESPClearBB(e)
+ if e and e.bb then
+  pcall(function() e.bb:Destroy() end)
+  e.bb = nil
+  e.label = nil
+ end
+end
+
+local function mainESPBuildBB(plr, char)
+ if not _G.ESPData.espEnabled then return end
+ local e = mainESPStore[plr]
+ if not e then return end
+ local head = char and char:FindFirstChild("Head")
+ if not head then return end
+
+ mainESPClearBB(e)
+
+ local bb = Instance.new("BillboardGui")
+ bb.Name = "ZyronisESP"
+ bb.Adornee = head
+ bb.Size = UDim2.new(0, 220, 0, 44)
+ bb.StudsOffset = Vector3.new(0, 3, 0)
+ bb.AlwaysOnTop = false
+ bb.LightInfluence = 0
+ bb.MaxDistance = 150
+
+ local label = Instance.new("TextLabel")
+ label.Name = "Label"
+ label.BackgroundTransparency = 1
+ label.Size = UDim2.new(1, 0, 1, 0)
+ label.Font = Enum.Font.GothamBold
+ label.TextSize = 15
+ label.TextStrokeTransparency = 0.35
+ label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+ label.Text = mainESPText(plr)
+ label.Parent = bb
+
+ bb.Parent = head
+ e.bb = bb
+ e.label = label
+end
+
+local function mainESPRemove(plr)
+ local e = mainESPStore[plr]
+ if not e then return end
+ if e.charConn then pcall(function() e.charConn:Disconnect() end) e.charConn = nil end
+ mainESPClearBB(e)
+ mainESPStore[plr] = nil
+end
+
+local function mainESPDisable()
+ if mainESPConn then pcall(function() mainESPConn:Disconnect() end) mainESPConn = nil end
+ if mainESPPlayerConn then pcall(function() mainESPPlayerConn:Disconnect() end) mainESPPlayerConn = nil end
+ for plr in pairs(mainESPStore) do mainESPRemove(plr) end
+ mainESPStore = {}
+end
+
+local function mainESPEnable()
+ mainESPDisable()
+
+ local function watch(plr)
+  if plr == LocalPlayer or mainESPStore[plr] then return end
+  local e = { charConn = nil, bb = nil, label = nil }
+  mainESPStore[plr] = e
+  e.charConn = plr.CharacterAdded:Connect(function(c)
+   task.wait(0.3)
+   if _G.ESPData.espEnabled then mainESPBuildBB(plr, c) end
+  end)
+  if plr.Character then mainESPBuildBB(plr, plr.Character) end
+ end
+
+ for _, plr in ipairs(Players:GetPlayers()) do watch(plr) end
+ mainESPPlayerConn = Players.PlayerAdded:Connect(watch)
+
+ mainESPConn = RunService.Heartbeat:Connect(function()
+  if not _G.ESPData.espEnabled then
+   mainESPDisable()
+   return
+  end
+  local col = mainESPColor()
+  local rgb = (col == nil)
+  for plr, e in pairs(mainESPStore) do
+   if not plr.Parent then
+    mainESPRemove(plr)
+   else
+    local char = plr.Character
+    if char and char:FindFirstChild("Head") then
+     if not e.bb or not e.bb.Parent then mainESPBuildBB(plr, char) end
+     if e.bb and e.bb.Parent then
+      if e.label then e.label.Text = mainESPText(plr) end
+      if rgb and e.label then
+       e.label.TextColor3 = Color3.fromHSV((tick() * 0.15) % 1, 0.9, 1)
+      elseif col and e.label then
+       e.label.TextColor3 = col
+      end
+     end
+    else
+     mainESPClearBB(e)
+    end
+   end
+  end
+ end)
+end
+
 ESPTab:AddToggle({
  Name = "ESP Aç/Kapat",
  Default = false,
  Callback = function(v)
  _G.ESPData.espEnabled = v
  if v then
- Window:Notify({
- Title = " ESP",
- Content = "ESP açıldı!",
- Duration = 2
- })
+  mainESPEnable()
+  Window:Notify({
+   Title = " ESP",
+   Content = "ESP açıldı!",
+   Duration = 2
+  })
+ else
+  mainESPDisable()
+  Window:Notify({
+   Title = " ESP",
+   Content = "ESP kapatıldı!",
+   Duration = 2
+  })
  end
  end
 })
@@ -1004,7 +1449,8 @@ ESPTab:AddDropdown({
  Options = {"Ad + Yaş", "Sadece Ad", "Sadece Yaş"},
  Default = "Ad + Yaş",
  Callback = function(v)
- _G.ESPData.espType = v
+  _G.ESPData.espType = v
+  if _G.ESPData.espEnabled then mainESPEnable() end
  end
 })
 
@@ -1015,6 +1461,12 @@ ESPTab:AddDropdown({
  Callback = function(v)
  _G.ESPData.selectedColor = v
  end
+})
+
+
+ESPTab:AddParagraph({
+ Title = "ESP Durumu",
+ Text = "Bu anahtar AD + YAŞ / RENK ayarlarını kullanan billboard ESP'yi açar. Highlight ESP ayrı sekmededir."
 })
 
 -- KARİKTER YÖNETİMİ
@@ -1041,6 +1493,7 @@ local orbitAngle = 0
 local freezeActive = false
 local freezeConnection = nil
 local invisibleActive = false
+local invisibleDescConn = nil
 local godmodeActive = false
 local annoyActive = false
 local annoyConnection = nil
@@ -1138,6 +1591,7 @@ TrollTabNew:AddToggle({
 
  if v then
  -- Client freeze: BodyPosition ile fikir Infinite Yield'den
+ local owned = ownsPart(tHRP)
  local bp = Instance.new("BodyPosition")
  bp.Name = "ZyronisFreezePos"
  bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
@@ -1152,7 +1606,8 @@ TrollTabNew:AddToggle({
  bv.Velocity = Vector3.zero
  bv.Parent = tHRP
 
- Window:Notify({ Title = "Freeze", Content = selectedPlayerName .. " donduruldu!", Duration = 2 })
+ Window:Notify({ Title = "Freeze", Content = selectedPlayerName .. " donduruldu!" .. (owned and "" or " (yerel)"), Duration = 2 })
+ if not owned then feNotice("Freeze", false) end
  else
  if tHRP:FindFirstChild("ZyronisFreezePos") then tHRP:FindFirstChild("ZyronisFreezePos"):Destroy() end
  if tHRP:FindFirstChild("ZyronisFreezeBV") then tHRP:FindFirstChild("ZyronisFreezeBV"):Destroy() end
@@ -1214,14 +1669,14 @@ TrollTabNew:AddToggle({
  if not t2 or not t2.Character then return end
  local th = t2.Character:FindFirstChild("HumanoidRootPart")
  local mh = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
- if th and mh then
- -- Ikisini birbirinin pozisyonuna isle
- local savedPos = mh.CFrame
- mh.CFrame = th.CFrame
- th.CFrame = savedPos
- end
- end)
- Window:Notify({ Title = "Glitch", Content = selectedPlayerName .. " ile glitch!", Duration = 2 })
+  if th and mh then
+  -- Ikisini birbirinin pozisyonuna isle
+  local savedPos = mh.CFrame
+  mh.CFrame = th.CFrame
+  tryReplicate(th, savedPos)
+  end
+  end)
+  Window:Notify({ Title = "Glitch", Content = selectedPlayerName .. " ile glitch!", Duration = 2 })
  end
  end
 })
@@ -1235,14 +1690,15 @@ TrollTabNew:AddButton({
  Window:Notify({ Title = "Hata", Content = "Oyuncu secilmedi!", Duration = 2 })
  return
  end
- local target = Players:FindFirstChild(selectedPlayerName)
- if not target or not target.Character then return end
- local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
- if tHRP then
- tHRP.CFrame = CFrame.new(0, -1000, 0)
- Window:Notify({ Title = "Void", Content = selectedPlayerName .. " ucuruma gonderildi!", Duration = 2 })
- end
- end
+  local target = Players:FindFirstChild(selectedPlayerName)
+  if not target or not target.Character then return end
+  local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+  if tHRP then
+  local owned = tryReplicate(tHRP, CFrame.new(0, -1000, 0), Vector3.new(0, -300, 0))
+  Window:Notify({ Title = "Void", Content = selectedPlayerName .. " ucuruma gonderildi!" .. (owned and "" or " (yerel)"), Duration = 2 })
+  if not owned then feNotice("Void", false) end
+  end
+  end
 })
 
 -- FREEFALL - Ikisini de havaya kaldır (Infinite Yield freefall)
@@ -1254,13 +1710,13 @@ TrollTabNew:AddButton({
  if not target or not target.Character then return end
  local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
  local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
- if tHRP and myHRP then
- local highPos = myHRP.CFrame + Vector3.new(0, 500, 0)
- tHRP.CFrame = highPos
- myHRP.CFrame = highPos + Vector3.new(2, 0, 0)
- Window:Notify({ Title = "Freefall", Content = "Ikisi de havada!", Duration = 2 })
- end
- end
+  if tHRP and myHRP then
+  local highPos = myHRP.CFrame + Vector3.new(0, 500, 0)
+  tryReplicate(tHRP, highPos, Vector3.new(0, 300, 0))
+  myHRP.CFrame = highPos + Vector3.new(2, 0, 0)
+  Window:Notify({ Title = "Freefall", Content = "Ikisi de havada!", Duration = 2 })
+  end
+  end
 })
 
 -- TOUCH FLING - ZYRONIS HUB VERSIYONU
@@ -1291,20 +1747,20 @@ TrollTabNew:AddToggle({
 
  local tHRP = hitChar:FindFirstChild("HumanoidRootPart")
  local tHum = hitChar:FindFirstChildOfClass("Humanoid")
- if tHRP and tHum and tHum.Health > 0 then
- -- CFrame spin fling (Cartola Hub metodu)
- local angle = 0
- local t = 0
- local conn2
- conn2 = RunService.Heartbeat:Connect(function(dt)
- t = t + dt
- if t >= 0.4 then conn2:Disconnect() return end
- angle = angle + 35
- tHRP.CFrame = tHRP.CFrame
- * CFrame.Angles(math.rad(angle), math.rad(angle * 0.5), math.rad(angle))
- * CFrame.new(0, 0.5, 0)
- end)
- end
+  if tHRP and tHum and tHum.Health > 0 then
+  -- CFrame spin fling (Cartola Hub metodu)
+  local angle = 0
+  local t = 0
+  local conn2
+  conn2 = RunService.Heartbeat:Connect(function(dt)
+  t = t + dt
+  if t >= 0.4 then conn2:Disconnect() return end
+  angle = angle + 35
+  tryReplicate(tHRP, tHRP.CFrame
+  * CFrame.Angles(math.rad(angle), math.rad(angle * 0.5), math.rad(angle))
+  * CFrame.new(0, 0.5, 0))
+  end)
+  end
 
  task.delay(1, function()
  touchFlingPlayers[hitPlayer.UserId] = nil
@@ -1316,10 +1772,10 @@ TrollTabNew:AddToggle({
  end
 
  connectTF(LocalPlayer.Character)
- LocalPlayer.CharacterAdded:Connect(function(c)
+ table.insert(touchFlingConns, LocalPlayer.CharacterAdded:Connect(function(c)
  c:WaitForChild("HumanoidRootPart")
  if touchFlingEnabled then task.wait(0.3) connectTF(c) end
- end)
+ end))
  Window:Notify({ Title = "Touch Fling", Content = "Aktif! Birine dokun.", Duration = 2 })
  end
  end
@@ -1334,29 +1790,36 @@ VisualTab:AddToggle({
  Name = "Invisible Ac/Kapat",
  Default = false,
  Callback = function(v)
- invisibleActive = v
- local char = LocalPlayer.Character
- if not char then return end
+  invisibleActive = v
+  local char = LocalPlayer.Character
+  if invisibleDescConn then
+   pcall(function() invisibleDescConn:Disconnect() end)
+   invisibleDescConn = nil
+  end
+  if not char then
+   Window:Notify({ Title = "Invisible", Content = v and "Karakter yok!" or "Normal gorunume donuldu!", Duration = 2 })
+   return
+  end
 
- for _, part in pairs(char:GetDescendants()) do
- if part:IsA("BasePart") then
- part.LocalTransparencyModifier = v and 1 or 0
- end
- if part:IsA("Decal") then
- part.LocalTransparencyModifier = v and 1 or 0
- end
- end
+  for _, part in pairs(char:GetDescendants()) do
+   if part:IsA("BasePart") then
+    part.LocalTransparencyModifier = v and 1 or 0
+   end
+   if part:IsA("Decal") then
+    part.LocalTransparencyModifier = v and 1 or 0
+   end
+  end
 
- -- Karaktere yeni part eklenince de invisible uygula
- if v then
- char.DescendantAdded:Connect(function(d)
- if invisibleActive and d:IsA("BasePart") then
- d.LocalTransparencyModifier = 1
- end
- end)
- end
+  -- Karaktere yeni part eklenince de invisible uygula
+  if v then
+   invisibleDescConn = char.DescendantAdded:Connect(function(d)
+    if invisibleActive and d:IsA("BasePart") then
+     d.LocalTransparencyModifier = 1
+    end
+   end)
+  end
 
- Window:Notify({ Title = "Invisible", Content = v and "Gorunmez olundu!" or "Normal gorunume donuldu!", Duration = 2 })
+  Window:Notify({ Title = "Invisible", Content = v and "Gorunmez olundu!" or "Normal gorunume donuldu!", Duration = 2 })
  end
 })
 
@@ -1386,8 +1849,9 @@ VisualTab:AddToggle({
                     return
                 end
                 local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if h and h.Health < 1 and h.Health ~= 0 then
-                    h.Health = h.MaxHealth
+                if h and (h.Health <= 0 or h:GetState() == Enum.HumanoidStateType.Dead) then
+                    pcall(function() h.Health = math.max(1, h.MaxHealth) end)
+                    pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
                 end
             end)
         end
@@ -1445,53 +1909,60 @@ VisualTab:AddToggle({
 
 -- HIGHLIGHT ESP - Instance bazli (BH scriptlerden daha iyi ESP)
 VisualTab:AddSection({ "Highlight ESP" })
-VisualTab:AddToggle({
- Name = "Highlight ESP Ac/Kapat",
- Default = false,
- Callback = function(v)
- -- Onceki highlight'lari temizle
+
+local highlightActive = false
+local highlightConns = {}
+
+local function clearHighlights()
+ highlightActive = false
  for _, h in pairs(highlightESP) do
- if h and h.Parent then h:Destroy() end
+  if h and h.Parent then pcall(function() h:Destroy() end) end
  end
  highlightESP = {}
+ for _, c in pairs(highlightConns) do
+  pcall(function() c:Disconnect() end)
+ end
+ highlightConns = {}
+end
 
- if v then
- local function addHighlight(plr)
- if plr == LocalPlayer then return end
- if not plr.Character then return end
-
+local function makeHighlight(char)
+ if not char then return end
  local hl = Instance.new("Highlight")
  hl.Name = "ZyronisHL"
  hl.FillColor = Color3.fromRGB(255, 0, 0)
  hl.OutlineColor = Color3.fromRGB(255, 255, 255)
  hl.FillTransparency = 0.5
  hl.OutlineTransparency = 0
- hl.Adornee = plr.Character
- hl.Parent = plr.Character
+ hl.Adornee = char
+ hl.Parent = char
  table.insert(highlightESP, hl)
+end
 
- plr.CharacterAdded:Connect(function(newChar)
- if not _G.ESPData.espEnabled then return end
- task.wait(0.5)
- local hl2 = Instance.new("Highlight")
- hl2.Name = "ZyronisHL"
- hl2.FillColor = Color3.fromRGB(255, 0, 0)
- hl2.OutlineColor = Color3.fromRGB(255, 255, 255)
- hl2.FillTransparency = 0.5
- hl2.OutlineTransparency = 0
- hl2.Adornee = newChar
- hl2.Parent = newChar
- table.insert(highlightESP, hl2)
- end)
- end
+VisualTab:AddToggle({
+ Name = "Highlight ESP Ac/Kapat",
+ Default = false,
+ Callback = function(v)
+  clearHighlights()
+  if v then
+   highlightActive = true
+   local function addHighlight(plr)
+    if plr == LocalPlayer or not highlightActive then return end
+    if plr.Character then makeHighlight(plr.Character) end
+    local c = plr.CharacterAdded:Connect(function(newChar)
+     if not highlightActive then return end
+     task.wait(0.5)
+     if highlightActive then makeHighlight(newChar) end
+    end)
+    table.insert(highlightConns, c)
+   end
 
- for _, plr in pairs(Players:GetPlayers()) do addHighlight(plr) end
- Players.PlayerAdded:Connect(addHighlight)
+   for _, plr in ipairs(Players:GetPlayers()) do addHighlight(plr) end
+   table.insert(highlightConns, Players.PlayerAdded:Connect(addHighlight))
 
- Window:Notify({ Title = "Highlight ESP", Content = "Highlight ESP ACIK!", Duration = 2 })
- else
- Window:Notify({ Title = "Highlight ESP", Content = "Highlight ESP KAPALI!", Duration = 2 })
- end
+   Window:Notify({ Title = "Highlight ESP", Content = "Highlight ESP ACIK!", Duration = 2 })
+  else
+   Window:Notify({ Title = "Highlight ESP", Content = "Highlight ESP KAPALI!", Duration = 2 })
+  end
  end
 })
 
@@ -1744,16 +2215,21 @@ RGBTab:AddToggle({
 
  if v then
  local hue = 0
+ local lastSend = 0
  rgbNameConn = RunService.Heartbeat:Connect(function(dt)
  if not rgbNameActive then
  rgbNameConn:Disconnect()
+ rgbNameConn = nil
  return
  end
  hue = (hue + dt * 0.5) % 1
+ -- Sunucuya saniyede ~6 kez gonder (Once her karede = ~60/s idi)
+ if tick() - lastSend < 0.16 then return end
+ lastSend = tick()
  local color = Color3.fromHSV(hue, 1, 1)
- -- Brookhaven RP isim rengi remote'u
  pcall(function()
- ReplicatedStorage.RE["1RPNam1eColo1r"]:FireServer("PickingRPNameColor", color)
+  local remote = ReplicatedStorage.RE and ReplicatedStorage.RE:FindFirstChild("1RPNam1eColo1r")
+  if remote then remote:FireServer("PickingRPNameColor", color) end
  end)
  end)
  Window:Notify({ Title = "RGB Isim", Content = "RGB Isim ACIK!", Duration = 2 })
@@ -1836,8 +2312,9 @@ RGBTab:AddToggle({
 local FakeLagTab = Window:MakeTab({ Title = "Fake Lag", Icon = "rbxassetid://15309138473" })
 
 FakeLagTab:AddSection({ "Fake Lag (Sahte Gecikme)" })
-FakeLagTab:AddLabel("Acikken diger oyunculara lagli gorunursun")
-FakeLagTab:AddLabel("Ama sen normal hareket edersin")
+FakeLagTab:AddLabel("Acikken periyodik olarak yukari sikrayip geri donersin")
+FakeLagTab:AddLabel("Sunucu konumunu gec guncelledigi icin takilan gorunursun")
+FakeLagTab:AddLabel("Not: bu esnada hedefin yaninda degilsin")
 
 local fakeLagDelay = 1
 FakeLagTab:AddSlider({
@@ -1846,84 +2323,57 @@ FakeLagTab:AddSlider({
  Max = 10,
  Increment = 1,
  Default = 3,
- Callback = function(v) fakeLagDelay = v end
+ Callback = function(v) fakeLagDelay = math.max(1, tonumber(v) or 1) end
 })
+
+local fakeLagGen = 0
+local fakeLagReturnPos = nil
+
+local function restoreFakeLagPos()
+ if fakeLagReturnPos then
+  local c = LocalPlayer.Character
+  local h = c and c:FindFirstChild("HumanoidRootPart")
+  if h and h.Parent then pcall(function() h.CFrame = fakeLagReturnPos end) end
+  fakeLagReturnPos = nil
+ end
+end
 
 FakeLagTab:AddToggle({
  Name = "Fake Lag Ac/Kapat",
  Default = false,
  Callback = function(v)
- fakeLagActive = v
+  fakeLagGen = fakeLagGen + 1
+  fakeLagActive = v
 
- -- Onceki klonu temizle
- if fakeLagClone then fakeLagClone:Destroy() fakeLagClone = nil end
- if fakeLagConn then fakeLagConn:Disconnect() fakeLagConn = nil end
+  -- Onceki klonu/conn'u temizle (eski surumlerden kalanlari da)
+  if fakeLagClone then pcall(function() fakeLagClone:Destroy() end) fakeLagClone = nil end
+  if fakeLagConn then pcall(function() fakeLagConn:Disconnect() end) fakeLagConn = nil end
 
- if v then
- local char = LocalPlayer.Character
- if not char then return end
- local hrp = char:FindFirstChild("HumanoidRootPart")
- if not hrp then return end
-
- -- Karakterin klonunu olustur (danyad22 metodu)
- char.Archivable = true
- fakeLagClone = char:Clone()
- fakeLagClone.Name = LocalPlayer.Name .. "_FakeLag"
-
- -- Klon'daki script ve humanoid'i pasif yap
- for _, d in pairs(fakeLagClone:GetDescendants()) do
- if d:IsA("Script") or d:IsA("LocalScript") then d:Destroy() end
- if d:IsA("BodyMover") then d:Destroy() end
- end
-
- local cloneHum = fakeLagClone:FindFirstChildOfClass("Humanoid")
- if cloneHum then
- cloneHum.WalkSpeed = 0
- cloneHum.JumpPower = 0
- end
-
- -- Klon'u Lighting'e koy (gorsel klonu orada gizle)
- fakeLagClone.Parent = game:GetService("Lighting")
-
- -- Gercek karakteri periyodik olarak gizle, klonu goster
- local savedPos = hrp.CFrame
- fakeLagConn = RunService.Heartbeat:Connect(function()
- if not fakeLagActive then
- fakeLagConn:Disconnect()
- return
- end
-
- -- Her fakeLagDelay saniyede bir pozisyonu guncelle (gecikme efekti)
- end)
-
- -- Ana loop: karakteri gecici olarak yukari ucar, geri doner
- task.spawn(function()
- while fakeLagActive do
- local c = LocalPlayer.Character
- local h = c and c:FindFirstChild("HumanoidRootPart")
- if h then
- savedPos = h.CFrame
- -- Yukari zıpla (karsidan gizle)
- h.CFrame = CFrame.new(
- math.random(-500,500),
- 5000,
- math.random(-500,500)
- )
- task.wait(fakeLagDelay)
- if fakeLagActive and h and h.Parent then
- h.CFrame = savedPos
- end
- task.wait(0.5)
- else
- task.wait(0.1)
- end
- end
- end)
-
- Window:Notify({ Title = "Fake Lag", Content = "Fake Lag ACIK! Diger oyunculara lagli gorunursun.", Duration = 3 })
- else
- Window:Notify({ Title = "Fake Lag", Content = "Fake Lag KAPALI!", Duration = 2 })
- end
+  if v then
+   local myGen = fakeLagGen
+   task.spawn(function()
+    while fakeLagActive and fakeLagGen == myGen do
+     local c = LocalPlayer.Character
+     local h = c and c:FindFirstChild("HumanoidRootPart")
+     if h then
+      fakeLagReturnPos = h.CFrame
+      pcall(function()
+       h.CFrame = CFrame.new(math.random(-500, 500), 5000, math.random(-500, 500))
+      end)
+      task.wait(fakeLagDelay)
+      restoreFakeLagPos()
+      task.wait(0.5)
+     else
+      task.wait(0.2)
+     end
+    end
+    restoreFakeLagPos()
+   end)
+   Window:Notify({ Title = "Fake Lag", Content = "Fake Lag ACIK! Takilan/kopuk goruneceksin.", Duration = 3 })
+  else
+   restoreFakeLagPos()
+   Window:Notify({ Title = "Fake Lag", Content = "Fake Lag KAPALI!", Duration = 2 })
+  end
  end
 })
 
@@ -1987,32 +2437,49 @@ HouseTab:AddSection({ "Zil Spam" })
 HouseTab:AddLabel("Yakin oldugun evin ziline spam yapar")
 
 local doorbellSpamActive = false
+local doorbellSpamGen = 0
 HouseTab:AddToggle({
  Name = "Zil Spam Ac/Kapat",
  Default = false,
  Callback = function(v)
- doorbellSpamActive = v
- if v then
- task.spawn(function()
- while doorbellSpamActive do
- -- Tum Doorbell'lari bul ve tetikle (Soluna Hub metodu)
- pcall(function()
- for _, obj in pairs(workspace:GetDescendants()) do
- if obj.Name == "Doorbell" and obj:IsA("BasePart") then
- local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
- if hrp and (obj.Position - hrp.Position).Magnitude < 50 then
- -- FireTouchInterest ile dokunma simule et
- firetouchinterest(hrp, obj, 0)
- firetouchinterest(hrp, obj, 1)
- end
- end
- end
- end)
- task.wait(0.1)
- end
- end)
- Window:Notify({ Title = "Zil Spam", Content = "Zil Spam ACIK!", Duration = 2 })
- end
+  doorbellSpamGen = doorbellSpamGen + 1
+  doorbellSpamActive = v
+  if v then
+   local myGen = doorbellSpamGen
+   task.spawn(function()
+    local lastScan = 0
+    local doorbells = {}
+    while doorbellSpamActive and doorbellSpamGen == myGen do
+     -- Descendant taramasini 1.5 sn'de bir yap (Once 10/sn idi)
+     if tick() - lastScan > 1.5 then
+      lastScan = tick()
+      doorbells = {}
+      pcall(function()
+       for _, obj in pairs(workspace:GetDescendants()) do
+        if obj.Name == "Doorbell" and obj:IsA("BasePart") then
+         table.insert(doorbells, obj)
+        end
+       end
+      end)
+     end
+     pcall(function()
+      local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+      if hrp then
+       for _, obj in ipairs(doorbells) do
+        if obj.Parent and (obj.Position - hrp.Position).Magnitude < 50 then
+         firetouchinterest(hrp, obj, 0)
+         firetouchinterest(hrp, obj, 1)
+        end
+       end
+      end
+     end)
+     task.wait(0.25)
+    end
+   end)
+   Window:Notify({ Title = "Zil Spam", Content = "Zil Spam ACIK!", Duration = 2 })
+  else
+   Window:Notify({ Title = "Zil Spam", Content = "Zil Spam KAPALI!", Duration = 2 })
+  end
  end
 })
 
@@ -2024,16 +2491,28 @@ HouseTab:AddToggle({
  if v then
  _G.kapiNoclipActive = true
  if not _G.kapiNoclipConn then
+ local lastScan = 0
+ local doorCache = {}
  _G.kapiNoclipConn = RunService.Heartbeat:Connect(function()
  if not _G.kapiNoclipActive then
  _G.kapiNoclipConn:Disconnect()
  _G.kapiNoclipConn = nil
  return
  end
+ -- Tam workspace taramasi 0.5 sn'de bir (Once her karede idi)
+ if tick() - lastScan > 0.5 then
+ lastScan = tick()
+ doorCache = {}
+ pcall(function()
  for _, obj in pairs(workspace:GetDescendants()) do
- if (obj.Name:find("Door") or obj.Name:find("door") or obj.Name:find("Gate")) and obj:IsA("BasePart") then
- obj.CanCollide = false
+ if obj:IsA("BasePart") and (obj.Name:find("Door") or obj.Name:find("door") or obj.Name:find("Gate")) then
+ table.insert(doorCache, obj)
  end
+ end
+ end)
+ end
+ for _, obj in ipairs(doorCache) do
+ if obj.Parent then obj.CanCollide = false end
  end
  end)
  end
@@ -2137,6 +2616,28 @@ ChatTab:AddSection({ "Chat Spam" })
 
 local chatSpamMsg = "ZYRONIS HUB"
 local chatSpamDelay = 1
+local chatSpamGen = 0
+
+local function sendChatMessage(msg)
+ if type(msg) ~= "string" or msg == "" then return end
+ local legacy = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+ if legacy and legacy:FindFirstChild("SayMessageRequest") then
+  pcall(function()
+   legacy.SayMessageRequest:FireServer(msg, "All")
+  end)
+  return
+ end
+ -- Yeni TextChatService yolu (Legacy chat kaldirildi)
+ pcall(function()
+  local tcs = game:GetService("TextChatService")
+  local channels = tcs:FindFirstChild("TextChannels")
+  local general = channels and channels:FindFirstChild("RBXGeneral")
+  if general and general.SendAsync then
+   general:SendAsync(msg)
+  end
+ end)
+end
+
 ChatTab:AddTextBox({
  Name = "Spam Mesaji",
  Default = "ZYRONIS HUB",
@@ -2151,56 +2652,58 @@ ChatTab:AddSlider({
  Max = 10,
  Increment = 1,
  Default = 2,
- Callback = function(v) chatSpamDelay = v end
+ Callback = function(v) chatSpamDelay = math.max(1, tonumber(v) or 1) end
 })
 
 ChatTab:AddToggle({
  Name = "Chat Spam Ac/Kapat",
  Default = false,
  Callback = function(v)
- chatSpamActive = v
- if v then
- task.spawn(function()
- while chatSpamActive do
- -- Roblox chat gonder
- game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents") and
- pcall(function()
- game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(chatSpamMsg, "All")
- end)
- task.wait(chatSpamDelay)
- end
- end)
- Window:Notify({ Title = "Chat Spam", Content = "Chat Spam ACIK!", Duration = 2 })
- end
+  chatSpamGen = chatSpamGen + 1
+  chatSpamActive = v
+  if v then
+   local myGen = chatSpamGen
+   task.spawn(function()
+    while chatSpamActive and chatSpamGen == myGen do
+     sendChatMessage(chatSpamMsg)
+     task.wait(chatSpamDelay)
+    end
+   end)
+   Window:Notify({ Title = "Chat Spam", Content = "Chat Spam ACIK!", Duration = 2 })
+  else
+   Window:Notify({ Title = "Chat Spam", Content = "Chat Spam KAPALI!", Duration = 2 })
+  end
  end
 })
 
 -- HORN SPAM - Araç kornasindan spam
 ChatTab:AddSection({ "Klakson Spam" })
+local hornSpamGen = 0
 ChatTab:AddToggle({
  Name = "Klakson Spam Ac/Kapat",
  Default = false,
  Callback = function(v)
- hornSpamActive = v
- if hornSpamConn then hornSpamConn:Disconnect() end
+  hornSpamGen = hornSpamGen + 1
+  hornSpamActive = v
+  if hornSpamConn then pcall(function() hornSpamConn:Disconnect() end) hornSpamConn = nil end
 
- if v then
- task.spawn(function()
- while hornSpamActive do
- pcall(function()
- local char = LocalPlayer.Character
- local hum = char and char:FindFirstChildOfClass("Humanoid")
- if hum and hum.SeatPart then
- -- Brookhaven klakson remote
- ReplicatedStorage.RE:FindFirstChild("1Hor1n") and
- ReplicatedStorage.RE["1Hor1n"]:FireServer("HornBeep")
- end
- end)
- task.wait(0.1)
- end
- end)
- Window:Notify({ Title = "Klakson", Content = "Klakson Spam ACIK! Araca bin.", Duration = 2 })
- end
+  if v then
+   local myGen = hornSpamGen
+   task.spawn(function()
+    while hornSpamActive and hornSpamGen == myGen do
+     pcall(function()
+      local char = LocalPlayer.Character
+      local hum = char and char:FindFirstChildOfClass("Humanoid")
+      if hum and hum.SeatPart then
+       local horn = ReplicatedStorage.RE and ReplicatedStorage.RE:FindFirstChild("1Hor1n")
+       if horn then horn:FireServer("HornBeep") end
+      end
+     end)
+     task.wait(0.1)
+    end
+   end)
+   Window:Notify({ Title = "Klakson", Content = "Klakson Spam ACIK! Araca bin.", Duration = 2 })
+  end
  end
 })
 
@@ -2290,13 +2793,11 @@ for packName, packId in pairs(animPacks) do
  if not hum then return end
  local animate = LocalPlayer.Character:FindFirstChild("Animate")
  if animate then
- for _, animTrack in pairs(hum:GetPlayingAnimationTracks()) do
- animTrack:Stop()
- end
- -- Animasyon paketini yukle
- local animLoader = hum:LoadAnimation(Instance.new("Animation"))
- end
- end)
+  for _, animTrack in pairs(hum:GetPlayingAnimationTracks()) do
+   animTrack:Stop()
+  end
+  end
+  end)
 
  -- Roblox animasyon apisi ile yukle
  local char = LocalPlayer.Character
@@ -2413,10 +2914,10 @@ UtilTab:AddButton({
  Name = "Sunucu Bilgisi Goster",
  Callback = function()
  local playerCount = #Players:GetPlayers()
- local ping = math.floor(workspace:GetRealPhysicsFPS())
+ local fps = math.floor(workspace:GetRealPhysicsFPS() + 0.5)
  Window:Notify({
  Title = "Sunucu Bilgisi",
- Content = "Oyuncular: " .. playerCount .. " | FPS: " .. ping .. " | JobID: " .. game.JobId:sub(1,8),
+ Content = "Oyuncular: " .. playerCount .. " | FPS: " .. fps .. " | JobID: " .. game.JobId:sub(1,8),
  Duration = 5
  })
  end
@@ -2470,6 +2971,16 @@ print("Brookhaven RP - Iyi Eglenceler!")
 -- GERCEK Brookhaven RemoteEvent isimleri kullanildi
 
 local RE = game:GetService("ReplicatedStorage"):FindFirstChild("RE") or game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
+if not RE then
+ -- RE yoksa her fonksiyon kendi "Remote bulunamadi" dalina duser (nil uzerinde hata vermez)
+ RE = Instance.new("Folder")
+ RE.Name = "ZYRONIS_RE_MISSING"
+ Window:Notify({
+  Title = " FE Troll v3",
+  Content = "ReplicatedStorage.RE bulunamadi - v3 ozellikleri pasif olacak",
+  Duration = 6
+ })
+end
 
 -- SEKME 1: FE TROLL (GERCEK REMOTE EVENTS)
 local FETrollTab = Window:MakeTab({ Title = "FE Troll v3", Icon = "rbxassetid://15309138473" })
@@ -2629,26 +3140,31 @@ AvatarTab2:AddButton({
 
 -- 7) FE RAINBOW SKIN (GERCEK REMOTE)
 local rainbowSkinActive = false
+local rainbowSkinGen = 0
 AvatarTab2:AddToggle({
  Name = "FE Rainbow Skin Ac/Kapat",
  Default = false,
  Callback = function(v)
- rainbowSkinActive = v
- if v then
- task.spawn(function()
- local skins = {"Light reddish violet","Carnation Pink","Lime green","Pink","Really Red","Cocoa","Rust","Light blue"}
- local i = 1
- while rainbowSkinActive do
- local avatarRE = RE:FindFirstChild("U1pdateAvatar12324")
- if avatarRE then
- pcall(function() avatarRE:FireServer("skintone", skins[i]) end)
- end
- i = (i % #skins) + 1
- task.wait(0.5)
- end
- end)
- Window:Notify({ Title = "Rainbow Skin", Content = "FE Rainbow Skin ACIK!", Duration = 2 })
- end
+  rainbowSkinGen = rainbowSkinGen + 1
+  rainbowSkinActive = v
+  if v then
+   local myGen = rainbowSkinGen
+   task.spawn(function()
+    local skins = {"Light reddish violet","Carnation Pink","Lime green","Pink","Really Red","Cocoa","Rust","Light blue"}
+    local i = 1
+    while rainbowSkinActive and rainbowSkinGen == myGen do
+     local avatarRE = RE:FindFirstChild("U1pdateAvatar12324")
+     if avatarRE then
+      pcall(function() avatarRE:FireServer("skintone", skins[i]) end)
+     end
+     i = (i % #skins) + 1
+     task.wait(0.5)
+    end
+   end)
+   Window:Notify({ Title = "Rainbow Skin", Content = "FE Rainbow Skin ACIK!", Duration = 2 })
+  else
+   Window:Notify({ Title = "Rainbow Skin", Content = "FE Rainbow Skin KAPALI!", Duration = 2 })
+  end
  end
 })
 
@@ -2869,25 +3385,29 @@ PowerTab:AddButton({
 
 -- 17) SUPER JUMP AUTOCLICKER
 local superJumpActive = false
+local superJumpGen = 0
 PowerTab:AddToggle({
  Name = "Otomatik Super Ziplama",
  Default = false,
  Callback = function(v)
- superJumpActive = v
- if v then
- task.spawn(function()
- while superJumpActive do
- local char = LocalPlayer.Character
- local hum = char and char:FindFirstChildOfClass("Humanoid")
- local hrp = char and char:FindFirstChild("HumanoidRootPart")
- if hum and hrp then
- hum:ChangeState(Enum.HumanoidStateType.Jumping)
- end
- task.wait(0.6)
- end
- end)
- Window:Notify({ Title = "Auto Jump", Content = "Otomatik ziplama ACIK!", Duration = 2 })
- end
+  superJumpGen = superJumpGen + 1
+  superJumpActive = v
+  if v then
+   local myGen = superJumpGen
+   task.spawn(function()
+    while superJumpActive and superJumpGen == myGen do
+     local char = LocalPlayer.Character
+     local hum = char and char:FindFirstChildOfClass("Humanoid")
+     if hum then
+      hum:ChangeState(Enum.HumanoidStateType.Jumping)
+     end
+     task.wait(0.6)
+    end
+   end)
+   Window:Notify({ Title = "Auto Jump", Content = "Otomatik ziplama ACIK!", Duration = 2 })
+  else
+   Window:Notify({ Title = "Auto Jump", Content = "Otomatik ziplama KAPALI!", Duration = 2 })
+  end
  end
 })
 
@@ -2898,76 +3418,106 @@ local ESPPlusTab = Window:MakeTab({ Title = "ESP Plus", Icon = "rbxassetid://153
 ESPPlusTab:AddSection({ "BillboardGui ESP (Mesafe + HP)" })
 local billboardESP = {}
 local billboardActive = false
+local billboardConns = {}
+local billboardUpdateConn = nil
+
+local function clearBillboardESP()
+ billboardActive = false
+ for _, c in pairs(billboardConns) do pcall(function() c:Disconnect() end) end
+ billboardConns = {}
+ if billboardUpdateConn then pcall(function() billboardUpdateConn:Disconnect() end) billboardUpdateConn = nil end
+ for _, b in pairs(billboardESP) do
+  if b and b.Parent then pcall(function() b:Destroy() end) end
+ end
+ billboardESP = {}
+end
 
 ESPPlusTab:AddToggle({
  Name = "Billboard ESP Ac/Kapat",
  Default = false,
  Callback = function(v)
- billboardActive = v
+  clearBillboardESP()
 
- -- Onceki billboard'lari temizle
- for _, b in pairs(billboardESP) do
- if b and b.Parent then b:Destroy() end
- end
- billboardESP = {}
+  if v then
+   billboardActive = true
+   local function attachBB(plr, char)
+    if not char then return end
+    local head = char:WaitForChild("Head", 3)
+    if not head then return end
+    if not billboardActive then return end
 
- if v then
- local function makeESP(plr)
- if plr == LocalPlayer then return end
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "ZyronisESP"
+    bb.AlwaysOnTop = true
+    bb.Size = UDim2.new(0, 120, 0, 50)
+    bb.StudsOffset = Vector3.new(0, 2, 0)
+    bb.Parent = head
 
- local function attachBB(char)
- if not char then return end
- local head = char:WaitForChild("Head", 3)
- if not head then return end
+    local nameLbl = Instance.new("TextLabel", bb)
+    nameLbl.Size = UDim2.new(1, 0, 0.5, 0)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.TextColor3 = Color3.fromRGB(255, 80, 80)
+    nameLbl.TextScaled = true
+    nameLbl.Font = Enum.Font.GothamBold
+    nameLbl.Text = plr.Name
 
- local bb = Instance.new("BillboardGui")
- bb.Name = "ZyronisESP"
- bb.AlwaysOnTop = true
- bb.Size = UDim2.new(0, 120, 0, 50)
- bb.StudsOffset = Vector3.new(0, 2, 0)
- bb.Parent = head
+    local infoLbl = Instance.new("TextLabel", bb)
+    infoLbl.Name = "Info"
+    infoLbl.Size = UDim2.new(1, 0, 0.5, 0)
+    infoLbl.Position = UDim2.new(0, 0, 0.5, 0)
+    infoLbl.BackgroundTransparency = 1
+    infoLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    infoLbl.TextScaled = true
+    infoLbl.Font = Enum.Font.Gotham
+    infoLbl.Text = "..."
 
- local nameLbl = Instance.new("TextLabel", bb)
- nameLbl.Size = UDim2.new(1, 0, 0.5, 0)
- nameLbl.BackgroundTransparency = 1
- nameLbl.TextColor3 = Color3.fromRGB(255, 80, 80)
- nameLbl.TextScaled = true
- nameLbl.Font = Enum.Font.GothamBold
- nameLbl.Text = plr.Name
+    table.insert(billboardESP, bb)
+   end
 
- local infoLbl = Instance.new("TextLabel", bb)
- infoLbl.Size = UDim2.new(1, 0, 0.5, 0)
- infoLbl.Position = UDim2.new(0, 0, 0.5, 0)
- infoLbl.BackgroundTransparency = 1
- infoLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
- infoLbl.TextScaled = true
- infoLbl.Font = Enum.Font.Gotham
- infoLbl.Text = "..."
+   local function makeESP(plr)
+    if plr == LocalPlayer then return end
+    if plr.Character then attachBB(plr, plr.Character) end
+    table.insert(billboardConns, plr.CharacterAdded:Connect(function(c)
+     if billboardActive then attachBB(plr, c) end
+    end))
+   end
 
- table.insert(billboardESP, bb)
+   for _, plr in ipairs(Players:GetPlayers()) do makeESP(plr) end
+   table.insert(billboardConns, Players.PlayerAdded:Connect(function(plr)
+    if billboardActive then makeESP(plr) end
+   end))
 
- -- HP ve mesafe guncelle
- RunService.Heartbeat:Connect(function()
- if not billboardActive or not bb.Parent then return end
- local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
- local tHRP = char:FindFirstChild("HumanoidRootPart")
- local hum = char:FindFirstChildOfClass("Humanoid")
- if myHRP and tHRP and hum then
- local dist = math.floor((myHRP.Position - tHRP.Position).Magnitude)
- local hp = math.floor(hum.Health)
- infoLbl.Text = "HP:" .. hp .. " | " .. dist .. "m"
- end
- end)
- end
+   -- Tek bir guncelleme dongusu (Once oyuncu basina ayri Heartbeat vardi)
+   billboardUpdateConn = RunService.Heartbeat:Connect(function()
+    if not billboardActive then
+     clearBillboardESP()
+     return
+    end
+    local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    for _, bb in pairs(billboardESP) do
+     if bb and bb.Parent then
+      local head = bb.Parent
+      local infoLbl = bb:FindFirstChild("Info")
+      if infoLbl and head and head:IsA("BasePart") then
+       local char = head.Parent
+       local tHRP = char and char:FindFirstChild("HumanoidRootPart")
+       local hum = char and char:FindFirstChildOfClass("Humanoid")
+       if myHRP and tHRP and hum then
+        local dist = math.floor((myHRP.Position - tHRP.Position).Magnitude)
+        infoLbl.Text = "HP:" .. math.floor(hum.Health) .. " | " .. dist .. "m"
+       end
+      end
+     else
+      local i = table.find(billboardESP, bb)
+      if i then table.remove(billboardESP, i) end
+     end
+    end
+   end)
 
- if plr.Character then attachBB(plr.Character) end
- plr.CharacterAdded:Connect(attachBB)
- end
-
- for _, plr in pairs(Players:GetPlayers()) do makeESP(plr) end
- Players.PlayerAdded:Connect(makeESP)
- Window:Notify({ Title = "ESP Plus", Content = "Billboard ESP ACIK!", Duration = 2 })
- end
+   Window:Notify({ Title = "ESP Plus", Content = "Billboard ESP ACIK!", Duration = 2 })
+  else
+   Window:Notify({ Title = "ESP Plus", Content = "Billboard ESP KAPALI!", Duration = 2 })
+  end
  end
 })
 
@@ -3048,13 +3598,14 @@ TeleTab:AddButton({
  end
  local target = Players:FindFirstChild(selectedPlayerName)
  if not target or not target.Character then return end
- local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
- local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
- if tHRP and myHRP then
- tHRP.CFrame = myHRP.CFrame * CFrame.new(3, 0, 0)
- Window:Notify({ Title = "Telekinesis", Content = selectedPlayerName .. " yanına cekildı!", Duration = 2 })
- end
- end
+  local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+  local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+  if tHRP and myHRP then
+  local owned = tryReplicate(tHRP, myHRP.CFrame * CFrame.new(3, 0, 0))
+  Window:Notify({ Title = "Telekinesis", Content = selectedPlayerName .. " yanına cekildı!" .. (owned and "" or " (yerel)"), Duration = 2 })
+  if not owned then feNotice("Telekinesis", false) end
+  end
+  end
 })
 
 -- 22) HEDEFI HAVAYA KALDIR
@@ -3068,12 +3619,12 @@ TeleTab:AddButton({
  if tHRP then
  local liftConn
  local t = 0
- liftConn = RunService.Heartbeat:Connect(function(dt)
- t = t + dt
- if t > 3 then liftConn:Disconnect() return end
- local th = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
- if th then th.CFrame = th.CFrame + Vector3.new(0, 1, 0) end
- end)
+  liftConn = RunService.Heartbeat:Connect(function(dt)
+  t = t + dt
+  if t > 3 then liftConn:Disconnect() return end
+  local th = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+  if th then tryReplicate(th, th.CFrame + Vector3.new(0, 1, 0)) end
+  end)
  Window:Notify({ Title = "Telekinesis", Content = selectedPlayerName .. " havaya kaldiriliyor!", Duration = 2 })
  end
  end
