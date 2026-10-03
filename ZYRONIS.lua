@@ -1,7 +1,128 @@
 local ZYRONIS_LIB_URL = "https://pastefy.app/KkevWErG/raw"
-local _libOk, Library = pcall(function()
- return loadstring(game:HttpGet(ZYRONIS_LIB_URL))()
+
+-- ============================================================
+-- ZYRONIS YAMA KATMANI
+-- Kütüphane uzak sunucudan geldiği için önce kaynağı indirip
+-- satır bazında yamalıyoruz. Her yamanın kaç kez uygulandığı
+-- ZyPatchLog içine düşer; hiç eşleşmezse sessizce sessiz kalır.
+-- ============================================================
+local ZyPatchLog = {}
+
+local function ZyPatch(Src, Old, New, Label)
+ local Count = 0
+ local Out, Pos = {}, 1
+ while true do
+  local S, E = Src:find(Old, Pos, true)
+  if not S then break end
+  Out[#Out + 1] = Src:sub(Pos, S - 1)
+  Out[#Out + 1] = New
+  Count = Count + 1
+  Pos = E + 1
+ end
+ Out[#Out + 1] = Src:sub(Pos)
+ ZyPatchLog[#ZyPatchLog + 1] = { Label = Label, Count = Count }
+ return table.concat(Out)
+end
+
+local ZyPrelude = [[
+local ZY_UIS = game:GetService("UserInputService")
+local ZY_touch = false
+local ZY_xy = { X = 0, Y = 0 }
+pcall(function()
+ ZY_UIS.InputBegan:Connect(function(I)
+  if I.UserInputType == Enum.UserInputType.Touch then ZY_touch = true end
+ end)
+ ZY_UIS.InputEnded:Connect(function(I)
+  if I.UserInputType == Enum.UserInputType.Touch then ZY_touch = false end
+ end)
 end)
+local function ZY_held()
+ if ZY_UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then return true end
+ return ZY_touch == true
+end
+local function ZY_pos()
+ local ok, p = pcall(function() return game:GetService("Players").LocalPlayer:GetMouse() end)
+ if ok and p then return { X = p.X, Y = p.Y } end
+ return { X = ZY_xy.X, Y = ZY_xy.Y }
+end
+]]
+
+local _srcOk, _src = pcall(game.HttpGet, game, ZYRONIS_LIB_URL)
+local _libOk, Library = false, nil
+
+if _srcOk and type(_src) == "string" and #_src > 2000 then
+ _src = ZyPrelude .. "\n" .. _src
+
+ -- 1) MakeTab colon-call: paste=Window gelince config yutuluyordu (tüm sekmeler "Tab!" görünüyordu)
+ _src = ZyPatch(_src,
+  'if type(paste) == "table" then Configs = paste end',
+  'if type(Configs) ~= "table" then Configs = paste end',
+  "MakeTab config")
+
+ -- 2) Dokunmatikte sürükleme/Slider ölü: MouseButton1 basılı kontrolü
+ _src = ZyPatch(_src,
+  'UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)',
+  'ZY_held()',
+  "dokunmatik basilma")
+
+ -- 3) Sürükleme konumu donmuş Input nesnesinden gelmasin (dokunmatik + mouse)
+ _src = ZyPatch(_src,
+  'DragStart = Input.Position',
+  'DragStart = Vector3.new(PlayerMouse.X, PlayerMouse.Y, 0)',
+  "sürükleme başlangıcı")
+ _src = ZyPatch(_src,
+  'local delta = Input.Position - DragStart',
+  'local delta = Vector3.new(PlayerMouse.X, PlayerMouse.Y, 0) - DragStart',
+  "sürükleme delta")
+
+ -- 4) Her karede 0.35sn tween üretiyordu (sürükleme gecikmesi + GC baskısı)
+ _src = ZyPatch(_src,
+  'CreateTween({Instance, "Position", Position, 0.35})',
+  'Instance.Position = Position',
+  "sürükleme tween")
+
+ -- 5) Ekran ölçeği yalnızca Y'ye bakıyordu -> dar ekranda pencere taşardı
+ _src = ZyPatch(_src,
+  'local UIScale = ViewportSize.Y / 450',
+  'local UIScale = (function() local VP = workspace.CurrentCamera.ViewportSize return math.min(VP.Y / 450, VP.X * 0.96 / 550) end)()',
+  "ilk ölçek")
+ _src = ZyPatch(_src,
+  'NewScale = ViewportSize.Y / math.clamp(NewScale, 300, 2000)',
+  'NewScale = (function() local VP = workspace.CurrentCamera.ViewportSize return math.min(VP.Y / 450, VP.X * 0.96 / 550) end)()',
+  "SetScale ölçeği")
+
+ -- 6) Dokunma hedefleri (sekme satırı 24px, satır 25px, kaydırma çubuğu 1.5px)
+ _src = ZyPatch(_src, 'Size = UDim2.new(1, 0, 0, 24)', 'Size = UDim2.new(1, 0, 0, 30)', "sekme yüksekliği")
+ _src = ZyPatch(_src, 'Size = UDim2.new(1, 0, 0, 25)', 'Size = UDim2.new(1, 0, 0, 32)', "satır yüksekliği")
+ _src = ZyPatch(_src, 'ScrollBarThickness = 1.5', 'ScrollBarThickness = 5', "scrollbar")
+
+ -- 7) ScreenGui: yeniden doğuşta silinmesin, hep üstte kalsın
+ _src = ZyPatch(_src,
+  'Name = "Nexus Library V1",',
+  'Name = "Nexus Library V1", ResetOnSpawn = false, DisplayOrder = 500,',
+  "ScreenGui özellikleri")
+
+ -- 8) Pencere boyut sınırları telefona göre çok genişti
+ _src = ZyPatch(_src,
+  'math.clamp(Pos1.X.Offset, 430, 1000), math.clamp(Pos1.Y.Offset, 200, 500)',
+  'math.clamp(Pos1.X.Offset, 300, 1400), math.clamp(Pos1.Y.Offset, 180, 720)',
+  "pencere boyut limiti")
+
+ -- 9) 16 slider x 0.3sn senkron tween = script açılışında ~4.8sn donma
+ _src = ZyPatch(_src,
+  'math.clamp(SliderPos, 0, 1), 0.5), 0.3, true }',
+  'math.clamp(SliderPos, 0, 1), 0.5), 0 }',
+  "slider açılış donması")
+
+ _libOk, Library = pcall(function()
+  return loadstring(_src)()
+ end)
+else
+ ZyPatchLog[#ZyPatchLog + 1] = { Label = "HttpGet kaynak alınamadı", Count = 0 }
+ _libOk, Library = pcall(function()
+  return loadstring(game:HttpGet(ZYRONIS_LIB_URL))()
+ end)
+end
 if not _libOk or type(Library) ~= "table" then
  local msg = "ZYRONIS: UI kutuphanesi yuklenemedi (loadstring/HttpGet). Adres: " .. ZYRONIS_LIB_URL
  pcall(function()
@@ -161,13 +282,36 @@ Library.MakeWindow = function(self, Configs)
 
  local _rawMakeTab = Win.MakeTab
  if type(_rawMakeTab) == "function" then
-  Win.MakeTab = function(self2, paste, cfg)
-   local Tab = _rawMakeTab(self2, paste, cfg)
+  Win.MakeTab = function(_, a, b)
+   local cfg = b
+   if type(cfg) ~= "table" then cfg = a end
+   if type(cfg) ~= "table" then cfg = _ end
+   if type(cfg) ~= "table" then cfg = {} end
+
+   local Tab = _rawMakeTab(Win, nil, cfg)
    if type(Tab) ~= "table" then return Tab end
 
    if type(Tab.AddSection) == "function" then
     Tab.AddLabel = function(t, text)
      return t.AddSection(t, text)
+    end
+   end
+
+   -- Kütüphane toggle/slider/dropdown oluştururken callback'i hemen çağırır;
+   -- bu yüzden script yüklenirken 50+ kez tetikleniyordu (kamera, sis, gravity,
+   -- hedef oyuncu = "" gibi yan etkiler). İlk çağrıyı yutuyoruz, arayüz aynen kurulur.
+   local function ZyOnce(Name)
+    local raw = Tab[Name]
+    if type(raw) ~= "function" then return end
+    Tab[Name] = function(t, elemCfg)
+     if type(elemCfg) == "table" and type(elemCfg.Callback) == "function" then
+      local UserCb, Seen = elemCfg.Callback, false
+      elemCfg.Callback = function(...)
+       if not Seen then Seen = true return end
+       return UserCb(...)
+      end
+     end
+     return raw(t, elemCfg)
     end
    end
 
@@ -181,6 +325,10 @@ Library.MakeWindow = function(self, Configs)
     end
    end
 
+   ZyOnce("AddToggle")
+   ZyOnce("AddSlider")
+   ZyOnce("AddDropdown")
+
    return Tab
   end
  end
@@ -193,9 +341,7 @@ end
 
 local Window = Library:MakeWindow({
  Title = " ZYRONIS HUB | BROOKHAVEN RP ",
- SubTitle = "Ultimate Merged Edition - All Features",
- LoadText = "ZYRONIS Yükleniyor...",
- Flags = "ZYRONIS"
+ SubTitle = "Ultimate Merged Edition - All Features"
 })
 
 Window:AddMinimizeButton({
@@ -208,6 +354,67 @@ Window:AddMinimizeButton({
  CornerRadius = UDim.new(0, 100),
  },
 })
+
+-- ============================================================
+-- MOBİL: ekran yönü/boyutu değişince ölçeği yeniden hesapla
+-- ve pencereyi görünür alanda tut. (Kütüphane ölçeği yalnızca
+-- yükleme anında bir kez hesapladığı için dönüşümde taşıyordu.)
+-- ============================================================
+task.spawn(function()
+ local LastVP
+ local function Apply()
+  local ok, vp = pcall(function()
+   local cam = workspace.CurrentCamera
+   return cam and cam.ViewportSize
+  end)
+  if not ok or not vp then return end
+  if LastVP and LastVP.X == vp.X and LastVP.Y == vp.Y then return end
+  LastVP = Vector2.new(vp.X, vp.Y)
+
+  pcall(function() if Library.SetScale then Library:SetScale(450) end end)
+
+  pcall(function()
+   local gui = game:GetService("CoreGui"):FindFirstChild("Nexus Library V1")
+   if not gui then return end
+   local hub = gui:FindFirstChild("Hub")
+   if not hub then return end
+   local scale = 1
+   local sc = gui:FindFirstChild("Scale")
+   if sc then scale = sc.Scale ~= 0 and sc.Scale or 1 end
+   local w, h = hub.Size.X.Offset * scale, hub.Size.Y.Offset * scale
+   local px = hub.Position.X.Offset * scale
+   local py = hub.Position.Y.Offset * scale
+   local minX = math.min(0, vp.X - w)
+   local minY = math.min(0, vp.Y - h)
+   local nx = math.clamp(px, minX, math.max(0, vp.X - w))
+   local ny = math.clamp(py, minY, math.max(0, vp.Y - h))
+   if w > vp.X then
+    -- ölçek sığmıyorsa oranla küçült
+    local fit = vp.X / w
+    if sc then sc.Scale = scale * fit end
+    scale = scale * fit
+    w, h = vp.X, h * fit
+   end
+   hub.Position = UDim2.fromOffset(nx, ny)
+  end)
+ end
+ Apply()
+ local cam = workspace.CurrentCamera
+ if cam then
+  pcall(function()
+   cam:GetPropertyChangedSignal("ViewportSize"):Connect(Apply)
+  end)
+ end
+ while true do
+  task.wait(2)
+  local c = workspace.CurrentCamera
+  if c ~= cam then
+   cam = c
+   pcall(function() cam:GetPropertyChangedSignal("ViewportSize"):Connect(Apply) end)
+  end
+  Apply()
+ end
+end)
 
 -- SERVİSLER VE GLOBAL DEĞİŞKENLER
 local Players = game:GetService("Players")
@@ -226,6 +433,50 @@ task.spawn(function()
 end)
 local UserInputService = game:GetService("UserInputService")
 local TeleportService = game:GetService("TeleportService")
+-- ============================================================
+-- SEKMELER: eski 29 sekme 10 temaya indirildi.
+-- Eski degisken adlari (NameTab, CarTab, ...) korundu ve
+-- asagida ilgili temanin takma adi olarak birakildi; boylece
+-- yuzlerce AddSection/AddButton cagrisi aynen calismaya devam eder.
+-- ============================================================
+local InfoTab      = Window:MakeTab({ Title = " Bilgi",         Icon = "info"   })
+local MovementTab  = Window:MakeTab({ Title = " Hareket",       Icon = "move"   })
+local CharacterTab = Window:MakeTab({ Title = " Karakter",      Icon = "user"   })
+local AvatarTab    = Window:MakeTab({ Title = " Oyuncu",        Icon = "users"  })
+local TrollTab     = Window:MakeTab({ Title = " Troll & PVP",   Icon = "skull"  })
+local ESPTab       = Window:MakeTab({ Title = " ESP & Gorunum", Icon = "eye"    })
+local MapTab       = Window:MakeTab({ Title = " Arac & Harita", Icon = "car"    })
+local HouseTab     = Window:MakeTab({ Title = " Dunya & Fizik", Icon = "globe"  })
+local CommandsTab  = Window:MakeTab({ Title = " Ses & Chat",    Icon = "music"  })
+local FakeLagTab   = Window:MakeTab({ Title = " Guclendir",     Icon = "gauge"  })
+
+local NameTab      = CharacterTab   -- Isim & Bio
+local ColorNameTab = CharacterTab   -- Renkli Isim
+local SizeTab      = CharacterTab   -- Boyut ve Animasyon
+local AvatarTab2   = CharacterTab   -- Avatar v2
+
+local SpectateTab  = AvatarTab      -- Spectate
+
+local TrollTabNew  = TrollTab       -- Troll Plus
+local FETrollTab   = TrollTab       -- FE Troll v3
+local FlingPlusTab = TrollTab       -- Fling Plus v4
+local TeleTab      = TrollTab       -- Telekinesis
+
+local VisualTab    = ESPTab         -- Gorsel
+local RGBTab       = ESPTab         -- RGB ve Efektler
+local ESPPlusTab   = ESPTab         -- ESP Plus
+
+local CarTab       = MapTab         -- Arac Plus
+
+local GravityTab   = HouseTab       -- Fizik & Gravity
+local WorldTab     = HouseTab       -- Dunya Araclari
+
+local AudioTab     = CommandsTab    -- Ses Oynatici
+local ChatTab      = CommandsTab    -- Chat Araclari
+
+local UtilTab      = FakeLagTab     -- Yardimci
+local PowerTab     = FakeLagTab     -- Guclendir (eski)
+
 local TweenService = game:GetService("TweenService")
 
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -234,15 +485,10 @@ local RootPart = Character:WaitForChild("HumanoidRootPart")
 
 -- Global Değişkenler
 local selectedPlayerName = nil
-local selectedLagMethod = nil
-local blackHoleActive = false
-local blackHoleRadius = 10
-local blackHoleAngle = 1
 local flyActive = false
 local speedActive = false
 local noclipActive = false
 local infiniteJumpActive = false
-local methodActive = false
 local methodKill = "Bus"
 local vehicleKillGen = 0
 
@@ -280,18 +526,58 @@ local function feNotice(feature, owned)
  })
 end
 
+-- ===== REMOTE YARDIMCISI (A8) =====
+-- Remote yoksa/net hatada hata toast'u gosterir ve false dondurur; boylece
+-- "basarili" toast'u yalnizca gercekten basarili cagrida acilir.
+local RE_FOLDERS = { "RE", "RemoteEvents", "Remotes" }
+local function GetRE(name)
+ for _, folderName in ipairs(RE_FOLDERS) do
+  local folder = ReplicatedStorage:FindFirstChild(folderName)
+  if folder then
+   local remote = folder:FindFirstChild(name)
+   if remote then return remote end
+  end
+ end
+ return nil
+end
+
+local function FireRE(name, ...)
+ local remote = GetRE(name)
+ if not remote then
+  Window:Notify({ Title = " Hata", Content = "Remote bulunamadı: " .. name, Duration = 2 })
+  return false
+ end
+ local args = { ... }
+ local ok = pcall(function() remote:FireServer(unpack(args)) end)
+ if not ok then
+  Window:Notify({ Title = " Hata", Content = "Remote hatası: " .. name, Duration = 2 })
+  return false
+ end
+ return true
+end
+
+local function InvokeRE(name, ...)
+ local remote = GetRE(name)
+ if not remote then
+  Window:Notify({ Title = " Hata", Content = "Remote bulunamadı: " .. name, Duration = 2 })
+  return false
+ end
+ local args = { ... }
+ local ok, res = pcall(function() return remote:InvokeServer(unpack(args)) end)
+ if not ok then
+  Window:Notify({ Title = " Hata", Content = "Remote hatası: " .. name, Duration = 2 })
+  return false
+ end
+ return true, res
+end
+
 _G.ESPData = {
  espEnabled = false,
  espType = "Ad + Yaş",
- selectedColor = "RGB",
- billboardGuis = {},
- highlights = {},
- lines = {},
- connections = {}
+ selectedColor = "RGB"
 }
 
 -- BİLGİ SEKMESİ
-local InfoTab = Window:MakeTab({ Title = " Bilgi", Icon = "rbxassetid://15309138473" })
 
 InfoTab:AddSection({ "ZYRONIS Hub Bilgisi" })
 InfoTab:AddParagraph({ "Hub Adı:", " ZYRONIS HUB - BROOKHAVEN RP " })
@@ -315,13 +601,21 @@ InfoTab:AddButton({
  end
 })
 
+InfoTab:AddSection({ "Sekme Yapisi (29 sekme 10 temaya indi)" })
+InfoTab:AddParagraph({ "10 Sekme:", "Bilgi | Hareket | Karakter | Oyuncu | Troll & PVP | ESP & Gorunum | Arac & Harita | Dunya & Fizik | Ses & Chat | Guclendir" })
+InfoTab:AddParagraph({ "Mobil:", "Dokunmatik kaydirma, dokunmatik surukleme, ucus paneli ve otomatik olcek destegi acik." })
+
 InfoTab:AddSection({ "Sunucudaki Oyuncular" })
 local playerCountLabel = InfoTab:AddParagraph({ "Oyuncu Sayısı:", tostring(#game.Players:GetPlayers()) })
 
--- Not: Paragraph dinamik guncelleme desteklemiyor, buton ile guncellenir
+local function UpdatePlayerCountLabel()
+ if not playerCountLabel then return end
+ pcall(function()
+  playerCountLabel:Set("Oyuncu Sayısı:", tostring(#Players:GetPlayers()))
+ end)
+end
 
 -- TROLL/PVP SEKMESİ
-local TrollTab = Window:MakeTab({ Title = " Troll/PVP", Icon = "skull" })
 
 -- Oyuncu Seçimi
 local function getPlayerList()
@@ -335,19 +629,51 @@ local function getPlayerList()
 end
 
 TrollTab:AddSection({ " Hedef Oyuncu Seç" })
-TrollTab:AddDropdown({
+local playerDropdown = TrollTab:AddDropdown({
  Name = "Oyuncu Seç",
  Options = getPlayerList(),
- Default = "",
  Callback = function(v)
- selectedPlayerName = v
- Window:Notify({
- Title = " Hedef",
- Content = v .. " seçildi!",
- Duration = 2
- })
+  -- Set(getPlayerList()) kutuyu sifirlar (nil gonderir). Listede biri ciktiginda
+  -- hedef hala sunucudaysa silme; yalnizca hedef kendisi ciktiyse birak.
+  if type(v) ~= "string" or v == "" then
+   if selectedPlayerName and not Players:FindFirstChild(selectedPlayerName) then
+    selectedPlayerName = nil
+    Window:Notify({
+     Title = " Hedef",
+     Content = "Hedef birakildi (oyuncu sunucudan cikti)",
+     Duration = 2
+    })
+   end
+   return
+  end
+  selectedPlayerName = v
+  Window:Notify({
+   Title = " Hedef",
+   Content = v .. " seçildi!",
+   Duration = 2
+  })
  end
 })
+
+-- Dropdown liste anlik degil: katilan/ayrilan oyunculari ekle/temizle
+local function refreshPlayerDropdown()
+ pcall(function() playerDropdown:Set(getPlayerList()) end)
+ UpdatePlayerCountLabel()
+end
+
+Players.PlayerAdded:Connect(function(plr)
+ if plr == LocalPlayer then UpdatePlayerCountLabel() return end
+ task.wait(0.5)
+ -- Add mevcut secimi bozmaz, sadece yeni oyuncuyu listeye ekler
+ pcall(function() playerDropdown:Add(plr.Name) end)
+ UpdatePlayerCountLabel()
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+ task.wait(0.2)
+ -- Listeyi her ayrilista tazele; secim koruma mantigi callback'te
+ refreshPlayerDropdown()
+end)
 
 -- ===== COUCH KILL FONKSIYONU =====
 local function KillPlayerCouch()
@@ -372,9 +698,7 @@ local function KillPlayerCouch()
  local originalPos = root.Position
  local sitPos = Vector3.new(145.51, -350.09, 21.58)
 
- pcall(function() 
- ReplicatedStorage:WaitForChild("RE"):WaitForChild("1Clea1rTool1s"):FireServer("ClearAllTools") 
- end)
+ FireRE("1Clea1rTool1s", "ClearAllTools")
  task.wait(0.2)
 
  pcall(function() 
@@ -386,6 +710,7 @@ local function KillPlayerCouch()
  if tool then tool.Parent = char end
  task.wait(0.1)
 
+ -- B2: sanal tus basimi - mobilde fiziksel klavye gerektirmez
  VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F, false, game)
  task.wait(0.1)
 
@@ -611,7 +936,7 @@ local function KillWithVehicle()
  pcall(function() vehicle:SetPrimaryPartCFrame(targetRoot.CFrame * CFrame.new(0, 0, 10)) end)
  end
  end
- RunService.RenderStepped:Wait()
+ RunService.Heartbeat:Wait()
  end
  if vehicleKillGen == myGen then
   pcall(function()
@@ -764,207 +1089,501 @@ TrollTab:AddButton({
 })
 
 -- HAREKET SEKMESİ
-local MovementTab = Window:MakeTab({ Title = " Hareket", Icon = "move" })
 
--- FLY FONKSIYONU
-local flySpeed = 50
-local function ToggleFly(state)
- flyActive = state
- 
- if flyActive then
- local bodyVelocity = Instance.new("BodyVelocity")
- bodyVelocity.Velocity = Vector3.new(0, 0, 0)
- bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
- bodyVelocity.Parent = RootPart
+local Move
+do
+ -- ===== MOBIL YARDIMCILARI (B1) =====
+ -- Dokunmatikte klavye yok: Humanoid.MoveDirection (thumbstick) + JumpRequest
+ -- ve kendi olusturdugumuz +/- pad ile dikey hareket. Masaustu WASD aynen calisir.
+ local flyPadUp = false
+ local flyPadDown = false
+ local flyPadCarActive = false
+ local flyPadJumpUntil = 0
+ local flyPadGui = nil
 
- local bodyGyro = Instance.new("BodyGyro")
- bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
- bodyGyro.Parent = RootPart
-
- local connection
- connection = RunService.RenderStepped:Connect(function()
- if not flyActive then
- bodyVelocity:Destroy()
- bodyGyro:Destroy()
- connection:Disconnect()
- return
+ local function getHorizontalMove()
+  local camCF = Camera.CFrame
+  local move = Vector3.new(0, 0, 0)
+  local keyUsed = false
+  if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+   move = move + camCF.LookVector
+   keyUsed = true
+  end
+  if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+   move = move - camCF.LookVector
+   keyUsed = true
+  end
+  if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+   move = move + camCF.RightVector
+   keyUsed = true
+  end
+  if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+   move = move - camCF.RightVector
+   keyUsed = true
+  end
+  if not keyUsed then
+   -- Klavye basilmiyorsa thumbstick/yon tuslarinin verdigi MoveDirection
+   local char = LocalPlayer.Character
+   local hum = char and char:FindFirstChildOfClass("Humanoid")
+   if hum then
+    local md = hum.MoveDirection
+    if md.Magnitude > 0.05 then
+     move = Vector3.new(md.X, 0, md.Z)
+    end
+   end
+  end
+  return move
  end
 
- local moveDirection = Vector3.new(0, 0, 0)
- if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDirection = moveDirection + Camera.CFrame.LookVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDirection = moveDirection - Camera.CFrame.LookVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDirection = moveDirection + Camera.CFrame.RightVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDirection = moveDirection - Camera.CFrame.RightVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDirection = moveDirection + Vector3.new(0, 1, 0) end
- if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDirection = moveDirection - Vector3.new(0, 1, 0) end
+ local function getVerticalMove()
+  local up = 0
+  if UserInputService:IsKeyDown(Enum.KeyCode.Space) then up = up + 1 end
+  if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then up = up - 1 end
+  if flyPadUp then up = up + 1 end
+  if flyPadDown then up = up - 1 end
+  if tick() < flyPadJumpUntil then up = up + 1 end
+  return up
+ end
 
- bodyVelocity.Velocity = (moveDirection.Magnitude > 0 and moveDirection.Unit or Vector3.zero) * flySpeed
- bodyGyro.CFrame = Camera.CFrame
- end)
+ -- Suruste (koltukta): WASD yoksa oturulan VehicleSeat throttle/steer,
+ -- o da yoksa thumbstick yonu. Klavye davranisi ayni kalir.
+ local function carMove()
+  local camCF = Camera.CFrame
+  local move = Vector3.new(0, 0, 0)
+  local keyUsed = false
+  if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+   move = move + camCF.LookVector
+   keyUsed = true
+  end
+  if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+   move = move - camCF.LookVector
+   keyUsed = true
+  end
+  if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+   move = move + camCF.RightVector
+   keyUsed = true
+  end
+  if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+   move = move - camCF.RightVector
+   keyUsed = true
+  end
+  if keyUsed then return move end
 
- Window:Notify({
- Title = " Uçma",
- Content = "Uçma başladı!",
- Duration = 2
+  local char = LocalPlayer.Character
+  local hum = char and char:FindFirstChildOfClass("Humanoid")
+  local seat = hum and hum.SeatPart
+  if seat and seat:IsA("VehicleSeat") then
+   local throttle = seat.Throttle
+   local steer = seat.Steer
+   if throttle ~= 0 or steer ~= 0 then
+    return seat.CFrame.LookVector * throttle + seat.CFrame.RightVector * steer
+   end
+  end
+  if hum then
+   local md = hum.MoveDirection
+   if md.Magnitude > 0.05 then
+    return Vector3.new(md.X, 0, md.Z)
+   end
+  end
+  return move
+ end
+
+ local function EnsureFlyPad()
+  if flyPadGui and flyPadGui.Parent then return flyPadGui end
+  local gui = Instance.new("ScreenGui")
+  gui.Name = "ZYRONIS_FlyPad"
+  gui.ResetOnSpawn = false
+  gui.DisplayOrder = 501
+  gui.IgnoreGuiInset = true
+  gui.Enabled = false
+  local ok = pcall(function() gui.Parent = game:GetService("CoreGui") end)
+  if not ok or not gui.Parent then
+   gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+  end
+  flyPadGui = gui
+
+  local function MakePad(text, yOff, onDown, onUp)
+   local b = Instance.new("TextButton")
+   b.Name = "ZyronisPad" .. text
+   b.AnchorPoint = Vector2.new(0.5, 0.5)
+   b.Position = UDim2.new(1, -72, 0.5, yOff)
+   b.Size = UDim2.new(0, 56, 0, 56) -- dokunma hedefi min 48x48 (B3)
+   b.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+   b.BackgroundTransparency = 0.3
+   b.TextColor3 = Color3.fromRGB(255, 255, 255)
+   b.Font = Enum.Font.GothamBold
+   b.TextSize = 32
+   b.Text = text
+   local corner = Instance.new("UICorner")
+   corner.CornerRadius = UDim.new(0, 14)
+   corner.Parent = b
+   b.Parent = gui
+   local activeInput = nil
+   b.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+     activeInput = input
+     onDown()
+    end
+   end)
+   b.InputEnded:Connect(function(input)
+    if activeInput and (input == nil or input == activeInput) then
+     activeInput = nil
+     onUp()
+    end
+   end)
+   -- Guvenlik: touch InputEnded butone ulasmazsa global dinleyici temizlesin
+   UserInputService.InputEnded:Connect(function(input)
+    if activeInput and input == activeInput then
+     activeInput = nil
+     onUp()
+    end
+   end)
+   return b
+  end
+
+  MakePad("+", -70, function() flyPadUp = true end, function() flyPadUp = false end)
+  MakePad("-", 10, function() flyPadDown = true end, function() flyPadDown = false end)
+  return gui
+ end
+
+ local function UpdateFlyPad()
+  if not flyPadGui or not flyPadGui.Parent then return end
+  local show = (flyActive or flyPadCarActive) == true and UserInputService.TouchEnabled == true
+  flyPadGui.Enabled = show
+  flyPadUp = false
+  flyPadDown = false
+ end
+
+ -- Mobil ziplama butonu / Space -> yukari asagi destegi
+ local _flyJumpConn = nil
+ local function BindFlyJump(char)
+  if _flyJumpConn then pcall(function() _flyJumpConn:Disconnect() end) _flyJumpConn = nil end
+  local hum = char and char:FindFirstChildOfClass("Humanoid")
+  if not hum then return end
+  _flyJumpConn = hum.JumpRequest:Connect(function()
+   if not flyActive and not flyPadCarActive then return end
+   if UserInputService:IsKeyDown(Enum.KeyCode.Space) then return end -- klavye zaten yonetiyor
+   flyPadJumpUntil = tick() + 0.35
+  end)
+ end
+
+ -- FLY FONKSIYONU
+ local flySpeed = 50
+ local flyConn = nil
+ local flyBV, flyBG = nil, nil
+
+ local function ClearFlyObjects()
+  if flyConn then pcall(function() flyConn:Disconnect() end) flyConn = nil end
+  if flyBV then pcall(function() flyBV:Destroy() end) flyBV = nil end
+  if flyBG then pcall(function() flyBG:Destroy() end) flyBG = nil end
+ end
+
+ local function ToggleFly(state)
+  flyActive = state
+  ClearFlyObjects()
+  flyPadUp = false
+  flyPadDown = false
+
+  if flyActive then
+   local root = RootPart
+   if not root or not root.Parent then
+    flyActive = false
+    -- toggle kutusunu da kapat (callback icinde Set yutulur, o yuzden geciktir)
+    task.delay(0.1, function() pcall(function() Move.flyToggle:Set(false) end) end)
+    Window:Notify({ Title = " Uçma", Content = "Karakter yok, uçma başlatılamadı", Duration = 2 })
+    return
+   end
+
+   local bodyVelocity = Instance.new("BodyVelocity")
+   bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+   bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+   bodyVelocity.Parent = root
+
+   local bodyGyro = Instance.new("BodyGyro")
+   bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+   bodyGyro.Parent = root
+
+   flyBV, flyBG = bodyVelocity, bodyGyro
+
+   -- Fizik/girdi simulasyonu Heartbeat'te (RenderStepped degil, A12)
+   flyConn = RunService.Heartbeat:Connect(function()
+    if not flyActive then
+     ClearFlyObjects()
+     return
+    end
+    local r = RootPart
+    if not r or not r.Parent then
+     ClearFlyObjects()
+     return
+    end
+
+    local moveDirection = getHorizontalMove()
+    local upDown = getVerticalMove()
+    if upDown ~= 0 then
+     moveDirection = moveDirection + Vector3.new(0, upDown, 0)
+    end
+
+    bodyVelocity.Velocity = (moveDirection.Magnitude > 0 and moveDirection.Unit or Vector3.zero) * flySpeed
+    bodyGyro.CFrame = Camera.CFrame
+   end)
+
+   pcall(EnsureFlyPad)
+   UpdateFlyPad()
+
+   Window:Notify({
+    Title = " Uçma",
+    Content = UserInputService.TouchEnabled and "Uçma başladı! Sagdaki + / - ile yukari-asagi" or "Uçma başladı!",
+    Duration = 2
+   })
+  else
+   UpdateFlyPad()
+  end
+ end
+
+ MovementTab:AddSection({ " Uçma" })
+ MovementTab:AddSlider({
+  Name = "Uçma Hızı",
+  Min = 1,
+  Max = 200,
+  Increment = 1,
+  Default = 50,
+  Callback = function(v)
+  flySpeed = v
+  end
  })
- end
-end
 
-MovementTab:AddSection({ " Uçma" })
-MovementTab:AddSlider({
- Name = "Uçma Hızı",
- Min = 1,
- Max = 200,
- Increment = 1,
- Default = 50,
- Callback = function(v)
- flySpeed = v
- end
-})
-
-MovementTab:AddToggle({
- Name = "Uçma Aç/Kapat",
- Default = false,
- Callback = function(v)
- ToggleFly(v)
- end
-})
-
--- SPEED FONKSIYONU
-local speedAmount = 30
-local function ToggleSpeed(state)
- speedActive = state
- 
- if speedActive then
- local connection
- connection = RunService.RenderStepped:Connect(function()
- if not speedActive or not Character or not RootPart then
- connection:Disconnect()
- return
- end
-
- local moveDirection = Vector3.new(0, 0, 0)
- if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDirection = moveDirection + Camera.CFrame.LookVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDirection = moveDirection - Camera.CFrame.LookVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDirection = moveDirection + Camera.CFrame.RightVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDirection = moveDirection - Camera.CFrame.RightVector end
-
- if moveDirection.Magnitude > 0 then
- RootPart.AssemblyLinearVelocity = (moveDirection.Magnitude > 0 and moveDirection.Unit or Vector3.zero) * speedAmount + Vector3.new(0, RootPart.AssemblyLinearVelocity.Y, 0)
- end
- end)
-
- Window:Notify({
- Title = " Hız",
- Content = "Hız boost açıldı!",
- Duration = 2
+ local flyToggle = MovementTab:AddToggle({
+  Name = "Uçma Aç/Kapat",
+  Default = false,
+  Callback = function(v)
+  ToggleFly(v)
+  end
  })
- end
-end
 
-MovementTab:AddSection({ " Hız Boost" })
-MovementTab:AddSlider({
- Name = "Hız Miktarı",
- Min = 1,
- Max = 150,
- Increment = 1,
- Default = 30,
- Callback = function(v)
- speedAmount = v
- end
-})
+ -- SPEED FONKSIYONU
+ local speedAmount = 30
+ local speedConn = nil
 
-MovementTab:AddToggle({
- Name = "Hız Boost Aç/Kapat",
- Default = false,
- Callback = function(v)
- ToggleSpeed(v)
- end
-})
+ local function ToggleSpeed(state)
+  speedActive = state
+  if speedConn then pcall(function() speedConn:Disconnect() end) speedConn = nil end
 
--- NOCLIP FONKSIYONU
-local noclipConnection
-local function ToggleNoclip(state)
- noclipActive = state
- 
- if noclipActive then
- noclipConnection = RunService.RenderStepped:Connect(function()
- if not noclipActive or not LocalPlayer.Character then
- noclipConnection:Disconnect()
- return
+  if speedActive then
+   speedConn = RunService.Heartbeat:Connect(function()
+    if not speedActive or not Character or not RootPart then
+     if speedConn then pcall(function() speedConn:Disconnect() end) speedConn = nil end
+     return
+    end
+
+    local moveDirection = getHorizontalMove()
+
+    if moveDirection.Magnitude > 0 then
+     RootPart.AssemblyLinearVelocity = moveDirection.Unit * speedAmount + Vector3.new(0, RootPart.AssemblyLinearVelocity.Y, 0)
+    end
+   end)
+
+   Window:Notify({
+    Title = " Hız",
+    Content = "Hız boost açıldı!",
+    Duration = 2
+   })
+  end
  end
 
- local c = LocalPlayer.Character
- if not c then return end
- for _, part in pairs(c:GetDescendants()) do
- if part:IsA("BasePart") then
- part.CanCollide = false
- end
- end
- end)
-
- Window:Notify({
- Title = " Noclip",
- Content = "Noclip açıldı!",
- Duration = 2
+ MovementTab:AddSection({ " Hız Boost" })
+ MovementTab:AddSlider({
+  Name = "Hız Miktarı",
+  Min = 1,
+  Max = 150,
+  Increment = 1,
+  Default = 30,
+  Callback = function(v)
+  speedAmount = v
+  end
  })
- else
- if noclipConnection then
- noclipConnection:Disconnect()
- end
 
- local c2 = LocalPlayer.Character
- if c2 then
- for _, part in pairs(c2:GetDescendants()) do
- if part:IsA("BasePart") then
- part.CanCollide = true
- end
- end
- end
- end
-end
-
-MovementTab:AddSection({ " Noclip" })
-MovementTab:AddToggle({
- Name = "Noclip Aç/Kapat",
- Default = false,
- Callback = function(v)
- ToggleNoclip(v)
- end
-})
-
--- INFINITE JUMP FONKSIYONU
-local _ijConn = nil
-local function SetupInfiniteJump()
- infiniteJumpActive = true
- if _ijConn then return end -- zaten bagli
- _ijConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
- if not infiniteJumpActive or gameProcessed then return end
- if input.KeyCode == Enum.KeyCode.Space then
- local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
- if humanoid then
- humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
- end
- end
- end)
-
- Window:Notify({
- Title = " Sonsuz Zıplama",
- Content = "Sonsuz zıplama açıldı!",
- Duration = 2
+ local speedToggle = MovementTab:AddToggle({
+  Name = "Hız Boost Aç/Kapat",
+  Default = false,
+  Callback = function(v)
+  ToggleSpeed(v)
+  end
  })
-end
 
-MovementTab:AddSection({ " Sonsuz Zıplama" })
-MovementTab:AddButton({
- Name = "Sonsuz Zıplamayı Aç",
- Callback = function()
- SetupInfiniteJump()
+ -- NOCLIP FONKSIYONU
+ local noclipConnection = nil
+ local noclipDescConn = nil
+ local noclipSnapshot = {}
+ local noclipChar = nil
+
+ local function SnapshotNoclip()
+  noclipSnapshot = {}
+  local c = LocalPlayer.Character
+  if not c then return end
+  for _, part in pairs(c:GetDescendants()) do
+   if part:IsA("BasePart") then
+    noclipSnapshot[part] = part.CanCollide
+   end
+  end
  end
-})
+
+ local function RestoreNoclip()
+  for part, value in pairs(noclipSnapshot) do
+   if part.Parent then
+    pcall(function() part.CanCollide = value end)
+   end
+  end
+  noclipSnapshot = {}
+ end
+
+ local function ToggleNoclip(state)
+  noclipActive = state
+
+  if noclipConnection then pcall(function() noclipConnection:Disconnect() end) noclipConnection = nil end
+  if noclipDescConn then pcall(function() noclipDescConn:Disconnect() end) noclipDescConn = nil end
+
+  if noclipActive then
+   -- A6: orijinal CanCollide degerlerini acilista sakla, kapatista aynen geri koy
+   SnapshotNoclip()
+
+   local c = LocalPlayer.Character
+   if c then
+    noclipChar = c
+    noclipDescConn = c.DescendantAdded:Connect(function(d)
+     if noclipActive and d:IsA("BasePart") then
+      noclipSnapshot[d] = d.CanCollide
+      pcall(function() d.CanCollide = false end)
+     end
+    end)
+   end
+
+   -- A12: her karede GetDescendants yerine snapshot uzerinden calis
+   noclipConnection = RunService.Heartbeat:Connect(function()
+    if not noclipActive then
+     if noclipConnection then pcall(function() noclipConnection:Disconnect() end) noclipConnection = nil end
+     noclipChar = nil
+     return
+    end
+    local c = LocalPlayer.Character
+    if not c then return end
+    -- karakter sonradan olustu/degistiyse onbellek + baglantiyi tazele
+    if noclipChar ~= c then
+     noclipChar = c
+     SnapshotNoclip()
+     if noclipDescConn then pcall(function() noclipDescConn:Disconnect() end) noclipDescConn = nil end
+     noclipDescConn = c.DescendantAdded:Connect(function(d)
+      if noclipActive and d:IsA("BasePart") then
+       noclipSnapshot[d] = d.CanCollide
+       pcall(function() d.CanCollide = false end)
+      end
+     end)
+    end
+    for part in pairs(noclipSnapshot) do
+     if part.Parent then
+      part.CanCollide = false
+     end
+    end
+   end)
+
+   Window:Notify({
+    Title = " Noclip",
+    Content = "Noclip açıldı!",
+    Duration = 2
+   })
+  else
+   noclipChar = nil
+   RestoreNoclip()
+  end
+ end
+
+ MovementTab:AddSection({ " Noclip" })
+ local noclipToggle = MovementTab:AddToggle({
+  Name = "Noclip Aç/Kapat",
+  Default = false,
+  Callback = function(v)
+  ToggleNoclip(v)
+  end
+ })
+
+ -- INFINITE JUMP FONKSIYONU (A1: gercek ac/kapat)
+ local _ijConn = nil
+ local _ijJumpConn = nil
+
+ local function ijBindCharacter(char)
+  if _ijJumpConn then pcall(function() _ijJumpConn:Disconnect() end) _ijJumpConn = nil end
+  local hum = char and char:FindFirstChildOfClass("Humanoid")
+  if not hum then return end
+  -- Mobil ziplama butonu icin (Space'e basilmaz)
+  _ijJumpConn = hum.JumpRequest:Connect(function()
+   if not infiniteJumpActive then return end
+   pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+  end)
+ end
+
+ local function StopInfiniteJump()
+  infiniteJumpActive = false
+  if _ijConn then pcall(function() _ijConn:Disconnect() end) _ijConn = nil end
+  if _ijJumpConn then pcall(function() _ijJumpConn:Disconnect() end) _ijJumpConn = nil end
+ end
+
+ local function SetupInfiniteJump()
+  infiniteJumpActive = true
+  if not _ijConn then
+   _ijConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not infiniteJumpActive or gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Space then
+     local humanoid = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+     if humanoid then
+      humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+     end
+    end
+   end)
+  end
+  ijBindCharacter(LocalPlayer.Character)
+
+  Window:Notify({
+   Title = " Sonsuz Zıplama",
+   Content = "Sonsuz zıplama açıldı!",
+   Duration = 2
+  })
+ end
+
+ MovementTab:AddSection({ " Sonsuz Zıplama" })
+ local infiniteJumpToggle = MovementTab:AddToggle({
+  Name = "Sonsuz Zıplama Aç/Kapat",
+  Default = false,
+  Callback = function(v)
+   if v then
+    SetupInfiniteJump()
+   else
+    StopInfiniteJump()
+   end
+  end
+ })
+
+ Move = {
+  h = getHorizontalMove,
+  v = getVerticalMove,
+  carMove = carMove,
+  ensurePad = EnsureFlyPad,
+  updatePad = UpdateFlyPad,
+  setCar = function(on)
+   flyPadCarActive = on == true
+  end,
+  bindJump = BindFlyJump,
+  ToggleFly = ToggleFly,
+  ToggleSpeed = ToggleSpeed,
+  ToggleNoclip = ToggleNoclip,
+  SetupInfiniteJump = SetupInfiniteJump,
+  StopInfiniteJump = StopInfiniteJump,
+  flyToggle = flyToggle,
+  speedToggle = speedToggle,
+  noclipToggle = noclipToggle,
+  infiniteJumpToggle = infiniteJumpToggle,
+ }
+end
 
 -- KARARKTERİSTİK SEKMESİ (Avatar)
-local CharacterTab = Window:MakeTab({ Title = " Karakter", Icon = "character" })
 
 CharacterTab:AddSection({ " Başlık Değiştir" })
 
@@ -1003,14 +1622,13 @@ CharacterTab:AddDropdown({
  }
  }
 
- pcall(function()
- ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ChangeCharacterBody"):InvokeServer(unpack(args))
+ if InvokeRE("ChangeCharacterBody", unpack(args)) then
  Window:Notify({
  Title = " Başlık",
  Content = value .. " seçildi!",
  Duration = 2
  })
- end)
+ end
  end
 })
 
@@ -1019,15 +1637,14 @@ CharacterTab:AddSection({ " Kız Paketi" })
 CharacterTab:AddButton({
  Name = "Kız Paketi 1 Uygula",
  Callback = function()
- pcall(function()
  local args = { [1] = "BundleGirlFace" }
- ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ChangeCharacterBody"):InvokeServer(unpack(args))
+ if InvokeRE("ChangeCharacterBody", unpack(args)) then
  Window:Notify({
  Title = " Bundle",
  Content = "Kız Paketi 1 uygulandı!",
  Duration = 2
  })
- end)
+ end
  end
 })
 
@@ -1036,20 +1653,18 @@ CharacterTab:AddSection({ " Erkek Paketi" })
 CharacterTab:AddButton({
  Name = "Erkek Paketi 1 Uygula",
  Callback = function()
- pcall(function()
  local args = { [1] = "BundleBoyFace" }
- ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ChangeCharacterBody"):InvokeServer(unpack(args))
+ if InvokeRE("ChangeCharacterBody", unpack(args)) then
  Window:Notify({
  Title = " Bundle",
  Content = "Erkek Paketi 1 uygulandı!",
  Duration = 2
  })
- end)
+ end
  end
 })
 
 -- İSİM & BİO SEKMESİ
-local NameTab = Window:MakeTab({ Title = " İsim & Bio", Icon = "text" })
 
 NameTab:AddSection(" RP İsmi Değiştir")
 
@@ -1068,14 +1683,13 @@ NameTab:AddButton({
  Name = " İsim Değiştir",
  Callback = function()
  if customName ~= "" then
- pcall(function()
- ReplicatedStorage.RE["1RPNam1eTex1t"]:FireServer("RolePlayName", customName)
+ if FireRE("1RPNam1eTex1t", "RolePlayName", customName) then
  Window:Notify({
  Title = " İsim",
  Content = "İsim: " .. customName,
  Duration = 2
  })
- end)
+ end
  else
  Window:Notify({
  Title = " Hata",
@@ -1101,14 +1715,13 @@ for _, name in ipairs(presetNames) do
  NameTab:AddButton({
  Name = name,
  Callback = function()
- pcall(function()
- ReplicatedStorage.RE["1RPNam1eTex1t"]:FireServer("RolePlayName", name)
+ if FireRE("1RPNam1eTex1t", "RolePlayName", name) then
  Window:Notify({
  Title = " İsim",
  Content = "İsim: " .. name,
  Duration = 2
  })
- end)
+ end
  end
  })
 end
@@ -1130,14 +1743,13 @@ NameTab:AddButton({
  Name = " Bio Değiştir",
  Callback = function()
  if customBio ~= "" then
- pcall(function()
- ReplicatedStorage.RE["1RPNam1eTex1t"]:FireServer("RolePlayBio", customBio)
+ if FireRE("1RPNam1eTex1t", "RolePlayBio", customBio) then
  Window:Notify({
  Title = " Bio",
  Content = "Bio değiştirildi!",
  Duration = 2
  })
- end)
+ end
  end
  end
 })
@@ -1157,20 +1769,18 @@ for _, bio in ipairs(presetBios) do
  NameTab:AddButton({
  Name = bio,
  Callback = function()
- pcall(function()
- ReplicatedStorage.RE["1RPNam1eTex1t"]:FireServer("RolePlayBio", bio)
+ if FireRE("1RPNam1eTex1t", "RolePlayBio", bio) then
  Window:Notify({
  Title = " Bio",
  Content = "Bio: " .. bio,
  Duration = 2
  })
- end)
+ end
  end
  })
 end
 
 -- RENKLİ İSİM SEKMESİ
-local ColorNameTab = Window:MakeTab({ Title = " Renkli İsim", Icon = "color" })
 
 ColorNameTab:AddSection(" İsim Renkleri")
 
@@ -1214,20 +1824,18 @@ ColorNameTab:AddSlider({
 ColorNameTab:AddButton({
  Name = " Rengi Uygula",
  Callback = function()
- pcall(function()
  local color = Color3.new(nameColorR / 255, nameColorG / 255, nameColorB / 255)
- ReplicatedStorage.RE["1RPNam1eColo1r"]:FireServer("PickingRPNameColor", color)
+ if FireRE("1RPNam1eColo1r", "PickingRPNameColor", color) then
  Window:Notify({
  Title = " Renk",
  Content = "İsim rengi değiştirildi!",
  Duration = 2
  })
- end)
+ end
  end
 })
 
 -- KOMUTLAR SEKMESİ
-local CommandsTab = Window:MakeTab({ Title = " Komutlar", Icon = "code" })
 
 CommandsTab:AddSection(" Sistemin Komutları")
 
@@ -1241,14 +1849,13 @@ CommandsTab:AddButton({
 CommandsTab:AddButton({
  Name = " Tüm Araçları Temizle",
  Callback = function()
- pcall(function()
- ReplicatedStorage:WaitForChild("RE"):WaitForChild("1Clea1rTool1s"):FireServer("ClearAllTools")
+ if FireRE("1Clea1rTool1s", "ClearAllTools") then
  Window:Notify({
  Title = " Temizlik",
  Content = "Tüm araçlar temizlendi!",
  Duration = 2
  })
- end)
+ end
  end
 })
 
@@ -1288,7 +1895,6 @@ CommandsTab:AddButton({
 })
 
 -- ESP SEKMESİ
-local ESPTab = Window:MakeTab({ Title = " ESP", Icon = "eye" })
 
 ESPTab:AddSection(" ESP Ayarları")
 
@@ -1398,6 +2004,7 @@ local function mainESPEnable()
   end
   local col = mainESPColor()
   local rgb = (col == nil)
+  local now = tick()
   for plr, e in pairs(mainESPStore) do
    if not plr.Parent then
     mainESPRemove(plr)
@@ -1406,11 +2013,22 @@ local function mainESPEnable()
     if char and char:FindFirstChild("Head") then
      if not e.bb or not e.bb.Parent then mainESPBuildBB(plr, char) end
      if e.bb and e.bb.Parent then
-      if e.label then e.label.Text = mainESPText(plr) end
-      if rgb and e.label then
-       e.label.TextColor3 = Color3.fromHSV((tick() * 0.15) % 1, 0.9, 1)
-      elseif col and e.label then
-       e.label.TextColor3 = col
+      -- A12: ayni metni/her karede yazma; RGB rengi 10 Hz'e dusur
+      if e.label then
+       -- A12: metni ~5 Hz rate-limit (per oyuncu), degismeyince tekrar yazma
+       if not e.lastText or now - e.lastText > 0.2 then
+        e.lastText = now
+        local txt = mainESPText(plr)
+        if e.label.Text ~= txt then e.label.Text = txt end
+       end
+       if rgb then
+        if not e.lastRGB or now - e.lastRGB > 0.1 then
+         e.lastRGB = now
+         e.label.TextColor3 = Color3.fromHSV((now * 0.15) % 1, 0.9, 1)
+        end
+       elseif col and e.label.TextColor3 ~= col then
+        e.label.TextColor3 = col
+       end
       end
      end
     else
@@ -1466,20 +2084,51 @@ ESPTab:AddDropdown({
 
 ESPTab:AddParagraph({
  Title = "ESP Durumu",
- Text = "Bu anahtar AD + YAŞ / RENK ayarlarını kullanan billboard ESP'yi açar. Highlight ESP ayrı sekmededir."
+ Text = "Bu anahtar AD + YAŞ / RENK ayarlarını kullanan billboard ESP'yi açar. Highlight ESP 'Gorsel' bolumundedir."
 })
 
 -- KARİKTER YÖNETİMİ
+local antiFlingActive = false
+local antiFlingConn = nil
+local godmodeActive = false -- CharacterAdded handler'inda da kullanilir
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
  Character = newCharacter
- Humanoid = newCharacter:WaitForChild("Humanoid")
- RootPart = newCharacter:WaitForChild("HumanoidRootPart")
- 
+ Humanoid = newCharacter:WaitForChild("Humanoid", 10) or newCharacter:FindFirstChildOfClass("Humanoid")
+ RootPart = newCharacter:WaitForChild("HumanoidRootPart", 10) or newCharacter:FindFirstChild("HumanoidRootPart")
+
  -- Reset edilecek değişkenler
  flyActive = false
  speedActive = false
  noclipActive = false
  infiniteJumpActive = false
+
+ -- A4: bayrak sifirlamak baglantilari/kaldirilan objeleri temizlemez;
+ -- toggle'larin callback'leri calisarak motorlari gercekten durdurur.
+ pcall(function() Move.flyToggle:Set(false) end)
+ pcall(function() Move.speedToggle:Set(false) end)
+ pcall(function() Move.noclipToggle:Set(false) end)
+ pcall(function() Move.infiniteJumpToggle:Set(false) end)
+
+ -- yeni karakterin Humanoid'u icin ziplama istegi baglantisini tazele
+ pcall(function() Move.bindJump(newCharacter) end)
+
+ -- A5: Godmode acikken yeni karaktere ayarlari yeniden uygula
+ if godmodeActive then
+  local hum = newCharacter:FindFirstChildOfClass("Humanoid")
+  if hum then
+   pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+   pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+   hum.BreakJointsOnDeath = false
+  end
+ end
+ -- A5: Anti Fling acikken yeni karaktere de uygula (dongusu de her karede tazeler)
+ if antiFlingActive then
+  local aHum = newCharacter:FindFirstChildOfClass("Humanoid")
+  if aHum then
+   pcall(function() aHum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+   pcall(function() aHum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false) end)
+  end
+ end
 end)
 
 -- YENI OZELLIKLER - ARASTIRMADAN EKLENDI
@@ -1491,29 +2140,23 @@ local orbitActive = false
 local orbitConnection = nil
 local orbitAngle = 0
 local freezeActive = false
-local freezeConnection = nil
 local invisibleActive = false
 local invisibleDescConn = nil
-local godmodeActive = false
 local annoyActive = false
 local annoyConnection = nil
 local glitchActive = false
 local glitchConnection = nil
-local antiFlingActive = false
-local antiFlingConn = nil
 local touchFlingEnabled = false
 local touchFlingConns = {}
 local touchFlingPlayers = {}
-local avatarCopyTarget = nil
 local highlightESP = {}
 local carFlyActive = false
 local carFlyConn = nil
 
 -- TROLL SEKMESINE YENI FONKSIYONLAR
-local TrollTabNew = Window:MakeTab({ Title = "Troll Plus", Icon = "rbxassetid://15309138473" })
 
 TrollTabNew:AddSection({ "Hedef Oyuncu" })
-TrollTabNew:AddLabel("Not: Troll/PVP sekmesindeki secimi kullanir")
+TrollTabNew:AddLabel("Not: Bu sekmedeki hedef oyuncu secimini kullanir")
 
 -- ORBIT - RocketPropulsion metodu (Infinite Yield'den)
 TrollTabNew:AddSection({ "Orbit Player" })
@@ -1578,40 +2221,73 @@ TrollTabNew:AddToggle({
 
 -- FREEZE PLAYER - BodyVelocity + BodyPosition ile dondur (Infinite Yield cfreeze metodu)
 TrollTabNew:AddSection({ "Freeze Player" })
-TrollTabNew:AddToggle({
+local freezeToggle
+local frozenTargetName = nil
+local frozenHRP = nil
+
+local function ClearFreezeOn(hrp)
+ if not hrp then return end
+ pcall(function()
+  local a = hrp:FindFirstChild("ZyronisFreezePos")
+  if a then a:Destroy() end
+  local b = hrp:FindFirstChild("ZyronisFreezeBV")
+  if b then b:Destroy() end
+ end)
+end
+
+freezeToggle = TrollTabNew:AddToggle({
  Name = "Freeze Ac/Kapat",
  Default = false,
  Callback = function(v)
  freezeActive = v
- if not selectedPlayerName then return end
- local target = Players:FindFirstChild(selectedPlayerName)
- if not target or not target.Character then return end
- local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
- if not tHRP then return end
-
  if v then
- -- Client freeze: BodyPosition ile fikir Infinite Yield'den
- local owned = ownsPart(tHRP)
- local bp = Instance.new("BodyPosition")
- bp.Name = "ZyronisFreezePos"
- bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
- bp.Position = tHRP.Position
- bp.D = 1000
- bp.P = 10000
- bp.Parent = tHRP
+  local target = selectedPlayerName and Players:FindFirstChild(selectedPlayerName)
+  local tHRP = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+  if not tHRP then
+   freezeActive = false
+   Window:Notify({ Title = "Freeze", Content = "Hedef yok, freeze başlatılamadı!", Duration = 2 })
+   task.delay(0.1, function() pcall(function() freezeToggle:Set(false) end) end)
+   return
+  end
 
- local bv = Instance.new("BodyVelocity")
- bv.Name = "ZyronisFreezeBV"
- bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
- bv.Velocity = Vector3.zero
- bv.Parent = tHRP
+  -- A2: kapaticinin calisacagi HRP'yi sakla (hedef respawn olursa bulunalim)
+  frozenTargetName = selectedPlayerName
+  frozenHRP = tHRP
 
- Window:Notify({ Title = "Freeze", Content = selectedPlayerName .. " donduruldu!" .. (owned and "" or " (yerel)"), Duration = 2 })
- if not owned then feNotice("Freeze", false) end
+  -- Client freeze: BodyPosition ile fikir Infinite Yield'den
+  local owned = ownsPart(tHRP)
+  local bp = Instance.new("BodyPosition")
+  bp.Name = "ZyronisFreezePos"
+  bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+  bp.Position = tHRP.Position
+  bp.D = 1000
+  bp.P = 10000
+  bp.Parent = tHRP
+
+  local bv = Instance.new("BodyVelocity")
+  bv.Name = "ZyronisFreezeBV"
+  bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+  bv.Velocity = Vector3.zero
+  bv.Parent = tHRP
+
+  Window:Notify({ Title = "Freeze", Content = frozenTargetName .. " donduruldu!" .. (owned and "" or " (yerel)"), Duration = 2 })
+  if not owned then feNotice("Freeze", false) end
  else
- if tHRP:FindFirstChild("ZyronisFreezePos") then tHRP:FindFirstChild("ZyronisFreezePos"):Destroy() end
- if tHRP:FindFirstChild("ZyronisFreezeBV") then tHRP:FindFirstChild("ZyronisFreezeBV"):Destroy() end
- Window:Notify({ Title = "Freeze", Content = selectedPlayerName .. " serbest!", Duration = 2 })
+  -- A2: once saklanan HRP, o yoksa hedefin mevcut karakteri uzerinden temizle
+  ClearFreezeOn(frozenHRP)
+  if frozenTargetName then
+   local t = Players:FindFirstChild(frozenTargetName)
+   if t and t.Character then
+    for _, d in pairs(t.Character:GetDescendants()) do
+     if d.Name == "ZyronisFreezePos" or d.Name == "ZyronisFreezeBV" then
+      pcall(function() d:Destroy() end)
+     end
+    end
+   end
+  end
+  frozenTargetName = nil
+  frozenHRP = nil
+  Window:Notify({ Title = "Freeze", Content = "Freeze serbest!", Duration = 2 })
  end
  end
 })
@@ -1773,7 +2449,7 @@ TrollTabNew:AddToggle({
 
  connectTF(LocalPlayer.Character)
  table.insert(touchFlingConns, LocalPlayer.CharacterAdded:Connect(function(c)
- c:WaitForChild("HumanoidRootPart")
+ c:WaitForChild("HumanoidRootPart", 5)
  if touchFlingEnabled then task.wait(0.3) connectTF(c) end
  end))
  Window:Notify({ Title = "Touch Fling", Content = "Aktif! Birine dokun.", Duration = 2 })
@@ -1782,7 +2458,6 @@ TrollTabNew:AddToggle({
 })
 
 -- KARAKTER / GORSEL SEKMESI
-local VisualTab = Window:MakeTab({ Title = "Gorsel", Icon = "rbxassetid://15309138473" })
 
 -- INVISIBLE - LocalTransparencyModifier ile (Infinite Yield invisible)
 VisualTab:AddSection({ "Gorunmezlik" })
@@ -1968,10 +2643,9 @@ VisualTab:AddToggle({
 
 -- AVATAR KOPYALA SEKMESI
 -- Kaynak: Soluna Hub avatar copy metodu
-local AvatarTab = Window:MakeTab({ Title = "Avatar Kopyala", Icon = "rbxassetid://15309138473" })
 
 AvatarTab:AddSection({ "Oyuncu Avatarini Kopyala" })
-AvatarTab:AddLabel("Troll/PVP sekmesindeki secimi kullanir")
+AvatarTab:AddLabel("Not: Hedef secimi icin TROLL & PVP bolumundeki oyuncu secimini kullanir")
 
 AvatarTab:AddButton({
  Name = "Avatari Kopyala",
@@ -2016,18 +2690,20 @@ AvatarTab:AddButton({
  end
  end)
 
- -- RP ismini kopyala
+ -- RP ismini kopyala (A8: remote yoksa basari toast'u yalan olmasin)
+ local rpNameRemoteOK = GetRE("1RPNam1eTex1t") ~= nil
  pcall(function()
- local rpName = target.Character:FindFirstChild("RPName") or
- target.Character:FindFirstChildOfClass("BillboardGui")
- if rpName then
- ReplicatedStorage.RE["1RPNam1eTex1t"]:FireServer("RolePlayName", target.DisplayName)
- end
+  local remote = GetRE("1RPNam1eTex1t")
+  local rpName = target.Character:FindFirstChild("RPName") or
+   target.Character:FindFirstChildOfClass("BillboardGui")
+  if remote and rpName then
+   remote:FireServer("RolePlayName", target.DisplayName)
+  end
  end)
 
  Window:Notify({
  Title = "Avatar Kopyala",
- Content = selectedPlayerName .. " avatari kopyalandi!",
+ Content = selectedPlayerName .. " avatari kopyalandi!" .. (rpNameRemoteOK and "" or " (RP ismi: remote yok)"),
  Duration = 3
  })
  end
@@ -2044,7 +2720,6 @@ AvatarTab:AddButton({
 
 -- HARITA TELEPORT SEKMESI
 -- Kaynak: Brookhaven harita koordinatlarindan
-local MapTab = Window:MakeTab({ Title = "Harita TP", Icon = "rbxassetid://15309138473" })
 
 MapTab:AddSection({ "Brookhaven Konumlari" })
 
@@ -2076,7 +2751,6 @@ end
 
 -- CAR FLY - Arac ile ucma
 -- Kaynak: Brookhaven arac remote eventlerinden
-local CarTab = Window:MakeTab({ Title = "Arac Plus", Icon = "rbxassetid://15309138473" })
 
 CarTab:AddSection({ "Car Fly (Aracla Uc)" })
 CarTab:AddLabel("Once bir araca binmeniz gerekiyor")
@@ -2097,9 +2771,15 @@ CarTab:AddToggle({
  Callback = function(v)
  carFlyActive = v
  if carFlyConn then carFlyConn:Disconnect() end
+ pcall(function()
+   Move.setCar(v)
+   if v then Move.ensurePad() end
+   Move.updatePad()
+  end)
 
  if v then
- carFlyConn = RunService.RenderStepped:Connect(function()
+ -- A12: RenderStepped -> Heartbeat (fizik adimiyla ayni anda)
+ carFlyConn = RunService.Heartbeat:Connect(function()
  if not carFlyActive then
  carFlyConn:Disconnect()
  return
@@ -2113,12 +2793,12 @@ CarTab:AddToggle({
  local seat = hum.SeatPart
  local vehicle = seat.Parent
 
- -- Araci kamera yonunde ilerlet
- local moveDir = Vector3.zero
- if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
- if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
- if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0, 1, 0) end
+ -- Araci kamera yonunde ilerlet (B1: WASD + mobil throttle/steer/pad)
+ local moveDir = Move.carMove()
+ local vertical = Move.v()
+ if vertical ~= 0 then
+  moveDir = moveDir + Vector3.new(0, vertical, 0)
+ end
 
  if vehicle and vehicle.PrimaryPart then
  if moveDir.Magnitude > 0 then
@@ -2128,7 +2808,7 @@ CarTab:AddToggle({
  end
  end
  end)
- Window:Notify({ Title = "Car Fly", Content = "Araca bin ve W/Space ile uc!", Duration = 3 })
+ Window:Notify({ Title = "Car Fly", Content = "Araca bin ve W/Space ile uc! (mobilde: thumbstick + sagdaki +/-)", Duration = 3 })
  end
  end
 })
@@ -2152,7 +2832,7 @@ CarTab:AddToggle({
  if v then
  _G.hizBoostActive = true
  if not _G.hizBoostConn then
- _G.hizBoostConn = RunService.RenderStepped:Connect(function()
+ _G.hizBoostConn = RunService.Heartbeat:Connect(function()
  if not _G.hizBoostActive then
  _G.hizBoostConn:Disconnect()
  _G.hizBoostConn = nil
@@ -2197,12 +2877,10 @@ local spectateConn = nil
 local antiSitConn = nil
 local chatSpamActive = false
 local hornSpamActive = false
-local hornSpamConn = nil
 local antiAfkConn = nil
 
 -- RGB & OZEL ISIM SEKMESI
 -- Kaynak: Soluna Hub RGB name metodu
-local RGBTab = Window:MakeTab({ Title = "RGB ve Efektler", Icon = "rbxassetid://15309138473" })
 
 -- RGB ISIM - Surekli renk degistirme
 RGBTab:AddSection({ "RGB Renkli Isim" })
@@ -2245,6 +2923,18 @@ RGBTab:AddToggle({
  if v then
  _G.rgbKarActive = true
  local hue = 0
+ -- A12: parca listesi her karede degil, karakter degisince (+2sn'de bir) yenilenir
+ local cachedChar, cachedParts, lastRefresh = nil, {}, 0
+ local function refreshParts(char)
+  cachedChar = char
+  cachedParts = {}
+  lastRefresh = tick()
+  for _, part in pairs(char:GetDescendants()) do
+   if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+    table.insert(cachedParts, part)
+   end
+  end
+ end
  if _G.rgbKarConn then _G.rgbKarConn:Disconnect() end
  _G.rgbKarConn = RunService.Heartbeat:Connect(function(dt)
  if not _G.rgbKarActive then
@@ -2256,8 +2946,11 @@ RGBTab:AddToggle({
  local color = Color3.fromHSV(hue, 1, 1)
  local char = LocalPlayer.Character
  if not char then return end
- for _, part in pairs(char:GetDescendants()) do
- if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+ if cachedChar ~= char or tick() - lastRefresh > 2 then
+  refreshParts(char)
+ end
+ for _, part in pairs(cachedParts) do
+ if part.Parent then
  part.Color = color
  end
  end
@@ -2284,6 +2977,8 @@ RGBTab:AddToggle({
 
  if v then
  local hue = 0
+ -- A12: arac degisince (+2sn'de bir) yenilenen parca onbelligi
+ local cachedVehicle, cachedParts, lastRefresh = nil, {}, 0
  rgbCarConn = RunService.Heartbeat:Connect(function(dt)
  if not rgbCarActive then rgbCarConn:Disconnect() return end
  hue = (hue + dt * 0.4) % 1
@@ -2293,11 +2988,18 @@ RGBTab:AddToggle({
  local hum = char:FindFirstChildOfClass("Humanoid")
  if not hum or not hum.SeatPart then return end
  local vehicle = hum.SeatPart.Parent
- if vehicle then
- for _, part in pairs(vehicle:GetDescendants()) do
- if part:IsA("BasePart") then
- part.Color = color
+ if not vehicle then return end
+ if cachedVehicle ~= vehicle or tick() - lastRefresh > 2 then
+  cachedVehicle = vehicle
+  cachedParts = {}
+  lastRefresh = tick()
+  for _, part in pairs(vehicle:GetDescendants()) do
+   if part:IsA("BasePart") then table.insert(cachedParts, part) end
+  end
  end
+ for _, part in pairs(cachedParts) do
+ if part.Parent then
+ part.Color = color
  end
  end
  end)
@@ -2309,7 +3011,6 @@ RGBTab:AddToggle({
 -- FAKE LAG - danyad22/FakeLag metodu
 -- Karakter klonu ile sahte gecikme
 -- Diger oyunculara sanki lag atiyormus gib gorunursun
-local FakeLagTab = Window:MakeTab({ Title = "Fake Lag", Icon = "rbxassetid://15309138473" })
 
 FakeLagTab:AddSection({ "Fake Lag (Sahte Gecikme)" })
 FakeLagTab:AddLabel("Acikken periyodik olarak yukari sikrayip geri donersin")
@@ -2379,10 +3080,9 @@ FakeLagTab:AddToggle({
 
 -- SPECTATE - Kamera kilitleme
 -- Kaynak: Infinite Yield view metodu
-local SpectateTab = Window:MakeTab({ Title = "Spectate", Icon = "rbxassetid://15309138473" })
 
 SpectateTab:AddSection({ "Oyuncu Izle (Spectate)" })
-SpectateTab:AddLabel("Troll/PVP sekmesindeki oyuncu secimini kullanir")
+SpectateTab:AddLabel("Not: Hedef secimi icin TROLL & PVP bolumundeki oyuncu secimini kullanir")
 
 SpectateTab:AddButton({
  Name = "Spectate Baslat",
@@ -2430,7 +3130,6 @@ SpectateTab:AddButton({
 
 -- EV / HUB YONETIMI
 -- Kaynak: Soluna Hub house management
-local HouseTab = Window:MakeTab({ Title = "Ev Yonetimi", Icon = "rbxassetid://15309138473" })
 
 -- ZIL SPAM - Brookhaven zil remote event'i
 HouseTab:AddSection({ "Zil Spam" })
@@ -2529,7 +3228,6 @@ HouseTab:AddToggle({
 
 -- SES OYNATICI
 -- Kaynak: Soluna Hub audio control
-local AudioTab = Window:MakeTab({ Title = "Ses Oynatici", Icon = "rbxassetid://15309138473" })
 
 AudioTab:AddSection({ "Ses Oynat (Herkese)" })
 AudioTab:AddLabel("Brookhaven ses remote'u ile sunucuya ses calinir")
@@ -2538,7 +3236,7 @@ local customAudioId = ""
 AudioTab:AddTextBox({
  Name = "Ses ID Gir",
  Default = "",
- PlaceholderText = "rbxassetid://XXXXXXXXX",
+ PlaceholderText = "Sadece rakam gir: 1234567890",
  ClearText = true,
  Callback = function(v)
  customAudioId = v
@@ -2548,39 +3246,72 @@ AudioTab:AddTextBox({
 AudioTab:AddButton({
  Name = "Ses Oynat",
  Callback = function()
- if customAudioId == "" then
- Window:Notify({ Title = "Hata", Content = "Ses ID girmedin!", Duration = 2 })
- return
+ -- A9: rbxassetid://123 gibi girislerde once rakamlari ayikla
+ local idStr = tostring(customAudioId or ""):gsub("%D", "")
+ if idStr == "" then
+  Window:Notify({ Title = "Hata", Content = "Ses ID girmedin (sadece rakam)!", Duration = 2 })
+  return
  end
+ local idNum = tonumber(idStr)
+ if not idNum then
+  Window:Notify({ Title = "Hata", Content = "Gecersiz Ses ID!", Duration = 2 })
+  return
+ end
+
+ -- A8/A9: remote var mi ayri ogren; gonderimi dogrula, toast'u ona gore ac
+ local remoteFound = false
+ local sentToServer = false
  pcall(function()
- -- Brookhaven ses remote eventi
- local re = ReplicatedStorage:FindFirstChild("RE") or ReplicatedStorage:FindFirstChild("RemoteEvents")
- if re then
- local audioRE = re:FindFirstChild("1Mus1ic") or re:FindFirstChild("Music") or re:FindFirstChild("1Sou1nd")
- if audioRE then
- audioRE:FireServer("PlayMusic", tonumber(customAudioId))
- end
- end
+  local re = ReplicatedStorage:FindFirstChild("RE") or ReplicatedStorage:FindFirstChild("RemoteEvents")
+   or ReplicatedStorage:FindFirstChild("Remotes")
+  if re then
+   local audioRE = re:FindFirstChild("1Mus1ic") or re:FindFirstChild("Music") or re:FindFirstChild("1Sou1nd")
+   if audioRE then
+    remoteFound = true
+    audioRE:FireServer("PlayMusic", idNum)
+    sentToServer = true
+   end
+  end
  end)
 
  -- Lokal ses (her zaman calisir)
+ -- A9: once kendimiz acan onceki sesleri kapat, sonra yenisini ac (birikmesin)
+ local SS = game:GetService("SoundService")
+ for _, old in pairs(SS:GetChildren()) do
+  if old:IsA("Sound") and old.Name == "ZyronisSound" then
+   pcall(function() old:Stop() old:Destroy() end)
+  end
+ end
  local sound = Instance.new("Sound")
- sound.SoundId = "rbxassetid://" .. customAudioId:gsub("[^%d]", "")
+ sound.Name = "ZyronisSound"
+ sound.SoundId = "rbxassetid://" .. idStr
  sound.Volume = 1
- sound.Parent = game:GetService("SoundService")
+ sound.Parent = SS
+ sound.Ended:Connect(function() pcall(function() sound:Destroy() end) end)
  sound:Play()
 
- Window:Notify({ Title = "Ses", Content = "Ses oynatiliyor!", Duration = 2 })
+ Window:Notify({
+  Title = "Ses",
+  Content = sentToServer and "Ses sunucuya gonderildi + lokal oynatiliyor!"
+   or (remoteFound and "Ses gonderilemedi, yalnizca lokal oynatiliyor!"
+   or "Remote bulunamadi, ses yalnizca sende oynuyor!"),
+  Duration = 3
+ })
  end
 })
 
 AudioTab:AddButton({
  Name = "Sesi Durdur",
  Callback = function()
+ -- A9: yalnizca hub'un acigi sesleri durdur (oyunun kendi sesini ezme)
+ local stopped = 0
  for _, s in pairs(game:GetService("SoundService"):GetChildren()) do
- if s:IsA("Sound") then s:Stop() s:Destroy() end
+  if s:IsA("Sound") and s.Name == "ZyronisSound" then
+   pcall(function() s:Stop() s:Destroy() end)
+   stopped = stopped + 1
+  end
  end
- Window:Notify({ Title = "Ses", Content = "Ses durduruldu!", Duration = 2 })
+ Window:Notify({ Title = "Ses", Content = stopped > 0 and "Ses durduruldu!" or "Oynatan ses yok!", Duration = 2 })
  end
 })
 
@@ -2598,10 +3329,18 @@ for soundName, soundId in pairs(presetSounds) do
  AudioTab:AddButton({
  Name = soundName,
  Callback = function()
+ local SS = game:GetService("SoundService")
+ for _, old in pairs(SS:GetChildren()) do
+  if old:IsA("Sound") and old.Name == "ZyronisSound" then
+   pcall(function() old:Stop() old:Destroy() end)
+  end
+ end
  local sound = Instance.new("Sound")
+ sound.Name = "ZyronisSound"
  sound.SoundId = "rbxassetid://" .. soundId
  sound.Volume = 1
- sound.Parent = game:GetService("SoundService")
+ sound.Parent = SS
+ sound.Ended:Connect(function() pcall(function() sound:Destroy() end) end)
  sound:Play()
  Window:Notify({ Title = "Ses", Content = soundName .. " oynatiliyor!", Duration = 2 })
  end
@@ -2610,7 +3349,6 @@ end
 
 -- CHAT SPAM & ARACLARI
 -- Kaynak: Soluna Hub chat spambot
-local ChatTab = Window:MakeTab({ Title = "Chat Araclari", Icon = "rbxassetid://15309138473" })
 
 ChatTab:AddSection({ "Chat Spam" })
 
@@ -2685,7 +3423,6 @@ ChatTab:AddToggle({
  Callback = function(v)
   hornSpamGen = hornSpamGen + 1
   hornSpamActive = v
-  if hornSpamConn then pcall(function() hornSpamConn:Disconnect() end) hornSpamConn = nil end
 
   if v then
    local myGen = hornSpamGen
@@ -2695,21 +3432,24 @@ ChatTab:AddToggle({
       local char = LocalPlayer.Character
       local hum = char and char:FindFirstChildOfClass("Humanoid")
       if hum and hum.SeatPart then
-       local horn = ReplicatedStorage.RE and ReplicatedStorage.RE:FindFirstChild("1Hor1n")
-       if horn then horn:FireServer("HornBeep") end
+       local horn = GetRE("1Player1sCa1r")
+       if horn then horn:FireServer("Horn") end
       end
      end)
      task.wait(0.1)
     end
    end)
-   Window:Notify({ Title = "Klakson", Content = "Klakson Spam ACIK! Araca bin.", Duration = 2 })
+   if GetRE("1Player1sCa1r") then
+    Window:Notify({ Title = "Klakson", Content = "Klakson Spam ACIK! Araca bin.", Duration = 2 })
+   else
+    Window:Notify({ Title = " Hata", Content = "Remote bulunamadı (Klakson), spam calismayabilir.", Duration = 3 })
+   end
   end
  end
 })
 
 -- BOYUT DEGISTIR
 -- Kaynak: Infinite Yield hipheight + Soluna karakter buyutme
-local SizeTab = Window:MakeTab({ Title = "Boyut ve Animasyon", Icon = "rbxassetid://15309138473" })
 
 SizeTab:AddSection({ "Karakter Boyutu" })
 
@@ -2822,7 +3562,6 @@ end
 
 -- ANTI AFK - VirtualUser ile
 -- Kaynak: Universal anti-afk scripti
-local UtilTab = Window:MakeTab({ Title = "Yardimci", Icon = "rbxassetid://15309138473" })
 
 UtilTab:AddSection({ "Anti AFK" })
 UtilTab:AddToggle({
@@ -2983,14 +3722,13 @@ if not RE then
 end
 
 -- SEKME 1: FE TROLL (GERCEK REMOTE EVENTS)
-local FETrollTab = Window:MakeTab({ Title = "FE Troll v3", Icon = "rbxassetid://15309138473" })
 
 -- 1) PIGGYBACK ALL - Herkesi birbirine bindirme
 FETrollTab:AddSection({ "Piggyback / Bindirme" })
 FETrollTab:AddButton({
  Name = "Herkesi Birbirine Bindir",
  Callback = function()
- local RE_trigger = RE:FindFirstChild("P1layerTriggerEvent54444")
+ local RE_trigger = RE:FindFirstChild("1Playe1rTrigge1rEven1t")
  if not RE_trigger then
  Window:Notify({ Title = "Hata", Content = "Remote bulunamadi!", Duration = 2 })
  return
@@ -3012,8 +3750,11 @@ FETrollTab:AddButton({
 FETrollTab:AddButton({
  Name = "Herkesi Ziplat",
  Callback = function()
- local RE_trigger = RE:FindFirstChild("P1layerTriggerEvent54444")
- if not RE_trigger then return end
+ local RE_trigger = GetRE("1Playe1rTrigge1rEven1t")
+ if not RE_trigger then
+ Window:Notify({ Title = " Hata", Content = "Remote bulunamadı, ziplatma yapılamadı!", Duration = 2 })
+ return
+ end
  for _, plr in pairs(Players:GetPlayers()) do
  pcall(function()
  RE_trigger:FireServer("DropButtonStopAll", plr)
@@ -3027,18 +3768,22 @@ FETrollTab:AddButton({
 FETrollTab:AddButton({
  Name = "FE Herkesi Korkut (Ses)",
  Callback = function()
- local soundRE = RE:FindFirstChild("G1unSounds12458")
- if not soundRE then return end
- pcall(function()
- soundRE:FireServer(Players, 7083236436, 1)
- end)
+ local soundRE = GetRE("1Gu1nSound1s")
+ local sent = false
+ if soundRE then
+ sent = pcall(function() soundRE:FireServer(Players, 7083236436, 1) end)
+ end
  -- Lokal de cal
  local s = Instance.new("Sound", workspace)
  s.SoundId = "rbxassetid://7083236436"
  s.Volume = 5
  s:Play()
  game:GetService("Debris"):AddItem(s, 5)
+ if sent then
  Window:Notify({ Title = "Scare", Content = "Herkes korkutuldu!", Duration = 2 })
+ else
+ Window:Notify({ Title = "Scare", Content = "Remote yok, ses yalnizca sende calindi!", Duration = 3 })
+ end
  end
 })
 
@@ -3060,27 +3805,42 @@ FETrollTab:AddButton({
  Window:Notify({ Title = "Hata", Content = "Sarki ID gir!", Duration = 2 })
  return
  end
- local soundRE = RE:FindFirstChild("G1unSounds12458")
- pcall(function()
- if soundRE then soundRE:FireServer(Players, feSongId, 1) end
- end)
+ local soundRE = GetRE("1Gu1nSound1s")
+ local sent = false
+ if soundRE then
+ sent = pcall(function() soundRE:FireServer(Players, feSongId, 1) end)
+ end
+ -- A9: onceki döngülü parçayi kapat ki ust üste binmesin
+ for _, old in pairs(workspace:GetChildren()) do
+  if old:IsA("Sound") and old.Name == "ZyronisFEMusic" then
+   pcall(function() old:Stop() old:Destroy() end)
+  end
+ end
  local s = Instance.new("Sound", workspace)
  s.SoundId = "rbxassetid://" .. feSongId
  s.Volume = 1
  s.Looped = true
  s.Name = "ZyronisFEMusic"
  s:Play()
- Window:Notify({ Title = "Muzik", Content = "Sarki caliniyor: " .. feSongId, Duration = 2 })
+ if sent then
+ Window:Notify({ Title = "Muzik", Content = "Sarki sunucuya gonderildi: " .. feSongId, Duration = 2 })
+ else
+ Window:Notify({ Title = "Muzik", Content = "Remote yok, sarki yalnizca sende caliniyor", Duration = 3 })
+ end
  end
 })
 
 FETrollTab:AddButton({
  Name = "Muzigi Durdur",
  Callback = function()
+ local stopped = 0
  for _, s in pairs(workspace:GetChildren()) do
- if s:IsA("Sound") then s:Stop() s:Destroy() end
+  if s:IsA("Sound") and s.Name == "ZyronisFEMusic" then
+   pcall(function() s:Stop() s:Destroy() end)
+   stopped = stopped + 1
+  end
  end
- Window:Notify({ Title = "Muzik", Content = "Muzik durduruldu!", Duration = 2 })
+ Window:Notify({ Title = "Muzik", Content = stopped > 0 and "Muzik durduruldu!" or "Oynatan muzik yok!", Duration = 2 })
  end
 })
 
@@ -3098,18 +3858,18 @@ FETrollTab:AddTextBox({
 FETrollTab:AddButton({
  Name = "Ev Muzigini Degistir",
  Callback = function()
- if houseMusicId == "" then return end
- local houseRE = RE:FindFirstChild("PlayersHouse")
- pcall(function()
- if houseRE then houseRE:FireServer("PickingHouseMusicText", houseMusicId) end
- end)
+ if houseMusicId == "" then
+ Window:Notify({ Title = "Hata", Content = "Muzik ID gir!", Duration = 2 })
+ return
+ end
+ if FireRE("1Player1sHous1e", "PickHouseMusicText", houseMusicId) then
  Window:Notify({ Title = "Ev Muzigi", Content = "Ev muzigi degistirildi!", Duration = 2 })
+ end
  end
 })
 
 -- SEKME 2: AVATAR / DIS GORUNUS
 -- GERCEK U1pdateAvatar12324 remote eventi
-local AvatarTab2 = Window:MakeTab({ Title = "Avatar v2", Icon = "rbxassetid://15309138473" })
 
 -- 6) SKIN TONE DEGISTIR
 AvatarTab2:AddSection({ "Ten Rengi Degistir (FE)" })
@@ -3130,11 +3890,9 @@ AvatarTab2:AddDropdown({
 AvatarTab2:AddButton({
  Name = "Ten Rengini Uygula",
  Callback = function()
- local avatarRE = RE:FindFirstChild("U1pdateAvatar12324")
- pcall(function()
- if avatarRE then avatarRE:FireServer("skintone", selectedSkin) end
- end)
+ if FireRE("U1pdateAvatar12324", "skintone", selectedSkin) then
  Window:Notify({ Title = "Avatar", Content = "Ten rengi: " .. selectedSkin, Duration = 2 })
+ end
  end
 })
 
@@ -3182,12 +3940,13 @@ AvatarTab2:AddTextBox({
 AvatarTab2:AddButton({
  Name = "RP Ismi Degistir",
  Callback = function()
- if rpName == "" then return end
- pcall(function()
- local nameRE = RE:FindFirstChild("1RPNam1eTex1t")
- if nameRE then nameRE:FireServer("RolePlayName", rpName) end
- end)
+ if rpName == "" then
+ Window:Notify({ Title = "Hata", Content = "RP isim bos olamaz!", Duration = 2 })
+ return
+ end
+ if FireRE("1RPNam1eTex1t", "RolePlayName", rpName) then
  Window:Notify({ Title = "RP Isim", Content = "RP ismin: " .. rpName, Duration = 2 })
+ end
  end
 })
 
@@ -3208,17 +3967,14 @@ for colorName, colorVal in pairs(nameColors) do
  AvatarTab2:AddButton({
  Name = colorName .. " Isim",
  Callback = function()
- pcall(function()
- local colorRE = RE:FindFirstChild("1RPNam1eColo1r")
- if colorRE then colorRE:FireServer("PickingRPNameColor", colorVal) end
- end)
+ if FireRE("1RPNam1eColo1r", "PickingRPNameColor", colorVal) then
  Window:Notify({ Title = "Isim Rengi", Content = colorName .. " renk uygulandi!", Duration = 2 })
+ end
  end
  })
 end
 
 -- SEKME 3: GRAVITY & FIZIK
-local GravityTab = Window:MakeTab({ Title = "Fizik & Gravity", Icon = "rbxassetid://15309138473" })
 
 -- 10) GRAVITY DEGISTIR
 GravityTab:AddSection({ "Yercekim" })
@@ -3300,7 +4056,6 @@ for weatherName, settings in pairs(weathers) do
 end
 
 -- SEKME 4: YEREL OYUNCU GUCLENDIR
-local PowerTab = Window:MakeTab({ Title = "Guclendir", Icon = "rbxassetid://15309138473" })
 
 -- 12) ZIPLAMA GUCU (GERCEK Jump Power)
 PowerTab:AddSection({ "Ziplama & Hiz" })
@@ -3412,7 +4167,6 @@ PowerTab:AddToggle({
 })
 
 -- SEKME 5: ESP PLUS
-local ESPPlusTab = Window:MakeTab({ Title = "ESP Plus", Icon = "rbxassetid://15309138473" })
 
 -- 18) MESAFE ESP + SAGLIK BAR
 ESPPlusTab:AddSection({ "BillboardGui ESP (Mesafe + HP)" })
@@ -3420,6 +4174,7 @@ local billboardESP = {}
 local billboardActive = false
 local billboardConns = {}
 local billboardUpdateConn = nil
+local billboardData = {} -- bb -> {info, hum} (A12: her karede resolve etme)
 
 local function clearBillboardESP()
  billboardActive = false
@@ -3430,6 +4185,7 @@ local function clearBillboardESP()
   if b and b.Parent then pcall(function() b:Destroy() end) end
  end
  billboardESP = {}
+ billboardData = {}
 end
 
 ESPPlusTab:AddToggle({
@@ -3447,10 +4203,11 @@ ESPPlusTab:AddToggle({
     if not billboardActive then return end
 
     local bb = Instance.new("BillboardGui")
-    bb.Name = "ZyronisESP"
+    -- A7: ana ESP ile ayni ad/offset uzerine binmesin
+    bb.Name = "ZyronisESPPlus"
     bb.AlwaysOnTop = true
     bb.Size = UDim2.new(0, 120, 0, 50)
-    bb.StudsOffset = Vector3.new(0, 2, 0)
+    bb.StudsOffset = Vector3.new(0, 6, 0)
     bb.Parent = head
 
     local nameLbl = Instance.new("TextLabel", bb)
@@ -3472,6 +4229,7 @@ ESPPlusTab:AddToggle({
     infoLbl.Text = "..."
 
     table.insert(billboardESP, bb)
+    billboardData[bb] = { info = infoLbl }
    end
 
    local function makeESP(plr)
@@ -3488,28 +4246,48 @@ ESPPlusTab:AddToggle({
    end))
 
    -- Tek bir guncelleme dongusu (Once oyuncu basina ayri Heartbeat vardi)
+   -- A12: ~5 Hz throttle + Info/Humanoid billboard basina bir kez resolve
+   local espTick = 0
    billboardUpdateConn = RunService.Heartbeat:Connect(function()
     if not billboardActive then
      clearBillboardESP()
      return
     end
+    espTick = espTick + 1
+    if espTick % 12 ~= 0 then return end -- 60/12 = ~5 Hz
     local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    for _, bb in pairs(billboardESP) do
-     if bb and bb.Parent then
+    for i = #billboardESP, 1, -1 do
+     local bb = billboardESP[i]
+     if not bb or not bb.Parent then
+      -- O(n^2) table.find yerine sondan silme
+      billboardData[bb] = nil
+      table.remove(billboardESP, i)
+     else
       local head = bb.Parent
-      local infoLbl = bb:FindFirstChild("Info")
-      if infoLbl and head and head:IsA("BasePart") then
+      local d = billboardData[bb]
+      if not d then
+       d = { info = bb:FindFirstChild("Info") }
+       billboardData[bb] = d
+      end
+      local infoLbl = d.info
+      if not infoLbl or not infoLbl.Parent then
+       infoLbl = bb:FindFirstChild("Info")
+       d.info = infoLbl
+      end
+      if infoLbl and head:IsA("BasePart") then
        local char = head.Parent
        local tHRP = char and char:FindFirstChild("HumanoidRootPart")
-       local hum = char and char:FindFirstChildOfClass("Humanoid")
+       local hum = d.hum
+       if not hum or not hum.Parent or hum.Parent ~= char then
+        hum = char and char:FindFirstChildOfClass("Humanoid")
+        d.hum = hum
+       end
        if myHRP and tHRP and hum then
         local dist = math.floor((myHRP.Position - tHRP.Position).Magnitude)
-        infoLbl.Text = "HP:" .. math.floor(hum.Health) .. " | " .. dist .. "m"
+        local txt = "HP:" .. math.floor(hum.Health) .. " | " .. dist .. "m"
+        if infoLbl.Text ~= txt then infoLbl.Text = txt end
        end
       end
-     else
-      local i = table.find(billboardESP, bb)
-      if i then table.remove(billboardESP, i) end
      end
     end
    end)
@@ -3583,10 +4361,9 @@ ESPPlusTab:AddToggle({
 
 -- SEKME 6: TELEKINESIS
 -- Infinite Yield telekinesis metodu
-local TeleTab = Window:MakeTab({ Title = "Telekinesis", Icon = "rbxassetid://15309138473" })
 
 TeleTab:AddSection({ "Oyuncu Cek / It" })
-TeleTab:AddLabel("Troll/PVP sekmesindeki oyuncu secimini kullanir")
+TeleTab:AddLabel("Not: Hedef secimi icin TROLL & PVP bolumundeki oyuncu secimini kullanir")
 
 -- 21) HEDEFI YANINA CEK
 TeleTab:AddButton({
@@ -3677,7 +4454,6 @@ TeleTab:AddButton({
 })
 
 -- SEKME 7: WORKSPACE ARACLARI
-local WorldTab = Window:MakeTab({ Title = "Dunya Araclari", Icon = "rbxassetid://15309138473" })
 
 -- 25) FOG EFEKTI
 WorldTab:AddSection({ "Sis (Fog)" })
@@ -3712,16 +4488,7 @@ WorldTab:AddButton({
  end
 })
 
--- 26) WORKSPACE FALLEN PART KALDIR
-WorldTab:AddButton({
- Name = "Fallen Parts Siniri Kaldir",
- Callback = function()
- workspace.FallenPartsDestroyHeight = -math.huge
- Window:Notify({ Title = "World", Content = "Part yok olma siniri kaldirildi!", Duration = 2 })
- end
-})
-
--- 27) TUM ISIKLARI KAPAT
+-- 26) TUM ISIKLARI KAPAT
 WorldTab:AddToggle({
  Name = "Tam Karanlik (Isiklari Kapat)",
  Default = false,
@@ -3747,31 +4514,63 @@ WorldTab:AddToggle({
 WorldTab:AddSection({ "Karakter Trail" })
 local trailActive = false
 local trailConn = nil
+-- A12: saniyede ~60 Part uretmek yerine gercek Trail + 2 Attachment
+local function trailClear(char)
+ local hrp = char and char:FindFirstChild("HumanoidRootPart")
+ if not hrp then return end
+ for _, child in pairs(hrp:GetChildren()) do
+  if child.Name == "ZyronisTrail" or child.Name == "ZyronisTrailA1" or child.Name == "ZyronisTrailA2" then
+   pcall(function() child:Destroy() end)
+  end
+ end
+end
+
+local function trailBuild(char)
+ local hrp = char and char:WaitForChild("HumanoidRootPart", 5)
+ if not hrp then return end
+ trailClear(char)
+ if not trailActive then return end
+
+ local a1 = Instance.new("Attachment")
+ a1.Name = "ZyronisTrailA1"
+ a1.Position = Vector3.new(0, 1, 0)
+ a1.Parent = hrp
+
+ local a2 = Instance.new("Attachment")
+ a2.Name = "ZyronisTrailA2"
+ a2.Position = Vector3.new(0, -1, 0)
+ a2.Parent = hrp
+
+ local trail = Instance.new("Trail")
+ trail.Name = "ZyronisTrail"
+ trail.Attachment0 = a1
+ trail.Attachment1 = a2
+ trail.Color = ColorSequence.new(Color3.fromRGB(255, 80, 200), Color3.fromRGB(80, 160, 255))
+ trail.Transparency = NumberSequence.new({
+  NumberSequenceKeypoint.new(0, 0.1),
+  NumberSequenceKeypoint.new(1, 1)
+ })
+ trail.Lifetime = 1
+ trail.MinLength = 0.1
+ trail.FaceCamera = true
+ trail.Parent = hrp
+end
+
 WorldTab:AddToggle({
  Name = "Trail Iz Ac/Kapat",
  Default = false,
  Callback = function(v)
  trailActive = v
- if trailConn then trailConn:Disconnect() end
+ if trailConn then trailConn:Disconnect() trailConn = nil end
+
  if v then
- trailConn = RunService.Heartbeat:Connect(function()
- if not trailActive then trailConn:Disconnect() return end
- local char = LocalPlayer.Character
- local hrp = char and char:FindFirstChild("HumanoidRootPart")
- if not hrp then return end
-
- local trail = Instance.new("Part")
- trail.Size = Vector3.new(0.5, 0.5, 0.5)
- trail.CFrame = hrp.CFrame
- trail.Anchored = true
- trail.CanCollide = false
- trail.Material = Enum.Material.Neon
- trail.Color = Color3.fromHSV(math.random(), 1, 1)
- trail.Parent = workspace
-
- game:GetService("Debris"):AddItem(trail, 1)
- end)
- Window:Notify({ Title = "Trail", Content = "Trail ACIK! Arkan parlak iz birakacak.", Duration = 2 })
+  trailBuild(LocalPlayer.Character)
+  trailConn = LocalPlayer.CharacterAdded:Connect(function(c)
+   if trailActive then task.wait(0.3) trailBuild(c) end
+  end)
+  Window:Notify({ Title = "Trail", Content = "Trail ACIK! Arkan parlak iz birakacak.", Duration = 2 })
+ else
+  trailClear(LocalPlayer.Character)
  end
  end
 })
@@ -3801,7 +4600,6 @@ WorldTab:AddButton({
 
 -- SEKME 8: FLING PLUS v4
 -- Daha guclu fling metodlari
-local FlingPlusTab = Window:MakeTab({ Title = "Fling Plus v4", Icon = "rbxassetid://15309138473" })
 
 -- 30) LAUNCH PLAYER - Hedefi yukari firlatma
 FlingPlusTab:AddSection({ "Fling Metodlari" })
